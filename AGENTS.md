@@ -18,23 +18,21 @@ Stack: **Tauri 2 + Rust + React 19/TypeScript/Vite**; Chrome MV3 extension; SQLi
 
 ## Current status
 
-Spec/plan are drafts awaiting approval. No app code yet. Start with Phase 0 in `tasks/todo.md`.
+Phase 0 is complete: Tauri 2 shell, React UI, design tokens, SQLite store,
+audit log, and `npm run verify`. No feature modules yet. Next is Task 5 in
+`tasks/todo.md` (process snapshot + denylist), which starts Phase 1.
 
-## Commands (planned; update when `package.json` / Cargo scripts exist)
+## Commands
 
 ```bash
 npm install
-npm run tauri dev
-npm run tauri build
-npm run lint
+npm run tauri dev          # dev app with HMR
+npm run tauri build        # installer
 npm run typecheck
-npm test
+npm run verify             # typecheck + build + fmt + clippy + cargo test
 cargo test --manifest-path src-tauri/Cargo.toml
-cargo clippy --manifest-path src-tauri/Cargo.toml -- -D warnings
+cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings
 cargo fmt --manifest-path src-tauri/Cargo.toml --check
-npm run build:extension
-npx playwright test
-npm run verify
 ```
 
 ## Hard invariants
@@ -53,15 +51,19 @@ npm run verify
 
 ```text
 src/                  React UI
+  components/         shell, page header, empty state, icons
+  pages/              Overview, Sessions, Processes, Startup, Settings, Audit
+  styles/             tokens.css + global.css
 src-tauri/            Rust core + Tauri app
-  src/monitor/        PDH/ETW telemetry
+  migrations/         SQL, applied via PRAGMA user_version
+  src/store/          SQLite settings + audit (tested)
+  src/monitor/        PDH/ETW telemetry (next)
   src/actions/        close, priority, startup
-  src/store/          SQLite settings + audit
   src/ipc/            native messaging + named pipe
   src/risk/           scoring and denylist
   src/bin/            easy-window-host.exe
-extension/            Chrome MV3 extension
-docs/                 spec, capability map, privacy/security
+extension/            Chrome MV3 extension (WXT)
+docs/                 spec, capability map, research, privacy/security
 tasks/                plan + task list
 tests/e2e/            Playwright extension tests
 ```

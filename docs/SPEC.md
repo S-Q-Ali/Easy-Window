@@ -71,7 +71,7 @@ See `docs/CAPABILITY_MAP.md`. Modules: `core`, `win-monitor`, `chrome-guard`, `d
 ## 7. Tech stack
 
 - Desktop: **Tauri 2** (Rust) + **React 19** + **TypeScript** + **Vite**.
-- UI: Tailwind CSS + Radix primitives + TanStack Table + Recharts + Lucide icons. Custom design tokens; no generic AI aesthetic.
+- UI: plain CSS with semantic design tokens (`src/styles/tokens.css`) — no Tailwind, because a handful of dense desktop screens do not justify the utility layer or the build dependency. Radix primitives for dialogs and menus, TanStack Table for dense process/session tables, inline SVG icons, hand-drawn sparklines. Custom tokens only; no generic AI aesthetic.
 - Rust: `windows` crate for Win32, `sysinfo` for process snapshots, PDH for CPU/GPU/disk counters, `rusqlite` for local store, `serde` for IPC, `tokio` for async, `tracing` for local logs.
 - Chrome: **Manifest V3** extension, TypeScript, Vite + CRXJS (or plain esbuild), using `chrome.cookies`, `chrome.browsingData`, `chrome.tabs`, `chrome.idle`, `chrome.storage`, `chrome.alarms`, `chrome.nativeMessaging`.
 - Native host: separate Rust binary `easy-window-host.exe` in the same Cargo project; stdio native-messaging protocol; named-pipe bridge to the GUI.
@@ -162,7 +162,7 @@ Tauri app (Rust core + React UI)
 - Mobile.
 - Guaranteed speed-boost claims.
 
-## 11. Commands (planned; update after scaffold)
+## 11. Commands
 
 ```bash
 # Install
@@ -174,22 +174,18 @@ npm run tauri dev
 # Build
 npm run tauri build
 
-# UI quality
-npm run lint
+# Quality
 npm run typecheck
-npm test
+npm run verify             # typecheck + build + fmt + clippy + cargo test
 
-# Rust quality
+# Rust only
 cargo test --manifest-path src-tauri/Cargo.toml
-cargo clippy --manifest-path src-tauri/Cargo.toml -- -D warnings
+cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings
 cargo fmt --manifest-path src-tauri/Cargo.toml --check
 
-# Chrome extension
+# Chrome extension (Phase 2)
 npm run build:extension
 npx playwright test
-
-# Full verification
-npm run verify
 ```
 
 ## 12. Project structure

@@ -28,16 +28,16 @@ The desktop app is a Tauri 2 shell with a React/TypeScript UI. A separate Rust n
 
 ### Phase 0 — Foundation
 
-- [ ] Task 1: Scaffold Tauri 2 + React/TS + Vite + Tailwind/Radix; configure lint, typecheck, tests.
-- [ ] Task 2: Add `AGENTS.md`, design tokens, app shell (sidebar/topbar), empty pages.
-- [ ] Task 3: Implement Rust `core` store, typed IPC, audit log, migrations.
-- [ ] Task 4: Add the `verify` script and CI-ready local checks.
+- [x] Task 1: Scaffold Tauri 2 + React/TS + Vite; configure typecheck and build. ESLint and JS tests arrive with the first shared logic.
+- [x] Task 2: Add `AGENTS.md`, design tokens, app shell, and honest empty pages.
+- [x] Task 3: Implement Rust `core` store, typed IPC, audit log, migrations.
+- [x] Task 4: Add the `verify` script and CI-ready local checks.
 
 ### Checkpoint 0
 
-- [ ] `npm run tauri dev` opens the app.
-- [ ] `npm run verify` passes.
-- [ ] No secrets, no network calls, no cookie values.
+- [x] `npm run tauri dev` opens the app.
+- [x] `npm run verify` passes.
+- [x] No secrets, no network calls, no cookie values.
 
 ### Phase 1 — Windows Performance Guard
 

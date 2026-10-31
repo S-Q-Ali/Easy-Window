@@ -6,25 +6,25 @@ Spec: `docs/SPEC.md`
 
 ## Phase 0 — Foundation
 
-- [ ] **Task 1: Scaffold Tauri 2 + React/TS**
-  - Acceptance: `npm run tauri dev` opens a window; lint, typecheck, and tests are configured.
+- [x] **Task 1: Scaffold Tauri 2 + React/TS**
+  - Acceptance: `npm run tauri dev` opens a window; typecheck and build are configured. ESLint and JS tests arrive with the first shared logic (Task 13).
   - Verify: `npm run tauri dev`; `npm run verify`.
-  - Files: `package.json`, `vite.config.ts`, `tsconfig*.json`, `src-tauri/Cargo.toml`, `src-tauri/tauri.conf.json`, `src/main.tsx`, `src/App.tsx`.
+  - Files: `package.json`, `vite.config.ts`, `tsconfig*.json`, `src-tauri/Cargo.toml`, `src-tauri/tauri.conf.json`, `src/main.tsx`.
 
-- [ ] **Task 2: App shell + design tokens + AGENTS.md**
+- [x] **Task 2: App shell + design tokens + AGENTS.md**
   - Acceptance: Sidebar/topbar shell with Overview, Sessions, Processes, Startup, Settings, Audit pages; tokens for color/spacing/type; `AGENTS.md` documents commands and invariants.
   - Verify: Keyboard tab pass; pages render; `AGENTS.md` reviewed.
   - Files: `src/components/layout/*`, `src/styles/tokens.css`, `src/pages/*`, `AGENTS.md`.
 
-- [ ] **Task 3: Rust core store + IPC + audit**
+- [x] **Task 3: Rust core store + IPC + audit**
   - Acceptance: SQLite migrations create settings/audit tables; typed Tauri commands round-trip; audit events redact secrets.
-  - Verify: `cargo test --manifest-path src-tauri/Cargo.toml`.
-  - Files: `src-tauri/src/store/*`, `src-tauri/src/ipc/*`, `src-tauri/src/lib.rs`, `src-tauri/migrations/*`.
+  - Verify: `cargo test --manifest-path src-tauri/Cargo.toml` (16 tests).
+  - Files: `src-tauri/src/store/*`, `src-tauri/src/commands.rs`, `src-tauri/src/lib.rs`, `src-tauri/migrations/*`.
 
-- [ ] **Task 4: Verification script**
-  - Acceptance: One command runs UI lint/typecheck/tests, Rust fmt/clippy/tests, and extension build.
+- [x] **Task 4: Verification script**
+  - Acceptance: One command runs UI typecheck/build plus Rust fmt/clippy/tests. The extension build joins this in Task 12.
   - Verify: `npm run verify` exits 0.
-  - Files: `package.json`, `scripts/verify.ps1` (or npm-run-all config).
+  - Files: `package.json`.
 
 ## Phase 1 — Windows Performance Guard
 
@@ -136,7 +136,7 @@ Spec: `docs/SPEC.md`
 
 ## Checkpoints
 
-- [ ] Checkpoint 0: app shell runs; verify passes.
+- [x] Checkpoint 0: app shell runs; verify passes.
 - [ ] Checkpoint 1: Windows monitor works; safe close and startup audit verified.
 - [ ] Checkpoint 2: Chrome guard works; no cookie values; auto-logout verified.
 - [ ] Checkpoint 3: integrated UX, security review, E2E pass.
