@@ -1,0 +1,80 @@
+# AGENTS.md — Easy Window
+
+## Read first
+
+- `docs/SPEC.md` — MVP spec, threat model, success criteria.
+- `docs/CAPABILITY_MAP.md` — module boundaries and build order.
+- `docs/RESEARCH.md` — which GitHub repos to depend on, adapt, reference, or avoid.
+- `tasks/plan.md` and `tasks/todo.md` — current phase and next task.
+
+## What this is
+
+Windows 11 desktop utility with two modules:
+
+1. **Chrome Session Guard** — MV3 extension + native host. Finds persistent logged-in website sessions and clears site data on demand or automatically.
+2. **Windows Performance Guard** — Tauri/Rust app. Per-process CPU/RAM/disk/GPU telemetry, safe close/throttle, startup audit.
+
+Stack: **Tauri 2 + Rust + React 19/TypeScript/Vite**; Chrome MV3 extension; SQLite local store.
+
+## Current status
+
+Spec/plan are drafts awaiting approval. No app code yet. Start with Phase 0 in `tasks/todo.md`.
+
+## Commands (planned; update when `package.json` / Cargo scripts exist)
+
+```bash
+npm install
+npm run tauri dev
+npm run tauri build
+npm run lint
+npm run typecheck
+npm test
+cargo test --manifest-path src-tauri/Cargo.toml
+cargo clippy --manifest-path src-tauri/Cargo.toml -- -D warnings
+cargo fmt --manifest-path src-tauri/Cargo.toml --check
+npm run build:extension
+npx playwright test
+npm run verify
+```
+
+## Hard invariants
+
+- **Never decrypt Chrome cookies/passwords or bypass App-Bound Encryption.** Chrome 156 uses `v20`; CDP on the default profile is blocked since Chrome 136. Use `chrome.cookies` metadata and `chrome.browsingData`.
+- **Never read/store cookie values, passwords, browsing-history content, or process command lines.** Metadata only; redact logs.
+- **Never kill critical Windows processes/services or auto-kill.** Graceful close first, explicit confirmation, audit event.
+- **No network by default.** No telemetry. Updates only via signed manifests.
+- **No admin by default.** No service stopping, registry cleaning, or system tweaks.
+- `browsingData.remove({ origins })` clears the **whole registrable domain**; warn for SSO and whitelist sensitive domains.
+- Process identity = **PID + creation time + executable path + signature**, never name alone.
+- Validate every IPC message; native host uses exact `allowed_origins`; named pipe ACL is current-user only.
+- Destructive actions require preview, confirmation, and an audit event.
+
+## Repo map
+
+```text
+src/                  React UI
+src-tauri/            Rust core + Tauri app
+  src/monitor/        PDH/ETW telemetry
+  src/actions/        close, priority, startup
+  src/store/          SQLite settings + audit
+  src/ipc/            native messaging + named pipe
+  src/risk/           scoring and denylist
+  src/bin/            easy-window-host.exe
+extension/            Chrome MV3 extension
+docs/                 spec, capability map, privacy/security
+tasks/                plan + task list
+tests/e2e/            Playwright extension tests
+```
+
+## Gotchas
+
+- Environment tested: Windows 11 build 26300, Chrome 156, WebView2 156, Rust 1.99, Node 24, .NET 8.
+- Per-process GPU: PDH `\GPU Engine(*)\Utilization Percentage`; instance names contain `pid_<PID>`.
+- Chrome cookie DB: `%LOCALAPPDATA%\Google\Chrome\User Data\<profile>\Network\Cookies`. If Chrome is running, copy `Cookies`, `Cookies-wal`, and `Cookies-shm` before reading.
+- Native messaging manifest: `HKCU\Software\Google\Chrome\NativeMessagingHosts\<name>` with an exact extension ID in `allowed_origins`.
+- Chrome Web Store broad cookie permissions are a release risk; unpacked extension is the MVP path.
+- The app must stay lightweight: pause sampling when hidden, use EcoQoS for itself, keep idle CPU <1% and RAM <80 MB.
+- Extension build uses **WXT** (MIT). CRXJS has no SPDX license — do not add it.
+- `nickshui/Win-Top` has **no LICENSE file**: ideas only, never copy code or assets.
+- `Moustachauve/cookie-editor` is GPL-3.0 and `sienori/Tab-Session-Manager` is MPL-2.0: do not copy code into this MIT project.
+- PDH GPU aggregation = **max engine utilization per PID**, not a sum; keep the engine type (`3D`, `VideoDecode`, `Copy`).
