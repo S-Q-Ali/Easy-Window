@@ -1,0 +1,40 @@
+.shell {
+  display: flex;
+  height: 100%;
+}
+
+.shell__main {
+  flex: 1;
+  min-width: 0;
+  padding: var(--space-8) var(--space-8) var(--space-9);
+  overflow-y: auto;
+}
+
+.shell__main:focus {
+  outline: none;
+}
+
+.skip-link {
+  position: absolute;
+  top: var(--space-3);
+  left: -9999px;
+  z-index: 20;
+  padding: var(--space-2) var(--space-3);
+  font-size: var(--text-sm);
+  color: var(--text);
+  text-decoration: none;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-1);
+}
+
+.skip-link:focus {
+  left: var(--space-3);
+}
+
+@media (max-width: 900px) {
+  .shell__main {
+    padding: var(--space-6) var(--space-5) var(--space-8);
+  }
+}

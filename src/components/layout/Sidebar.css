@@ -1,0 +1,112 @@
+.sidebar {
+  display: flex;
+  flex: 0 0 var(--sidebar-width);
+  flex-direction: column;
+  gap: var(--space-6);
+  width: var(--sidebar-width);
+  padding: var(--space-4) var(--space-3);
+  overflow-y: auto;
+  background: var(--bg-subtle);
+  border-right: 1px solid var(--border);
+}
+
+.sidebar__brand {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-1) var(--space-2);
+}
+
+.sidebar__brand svg {
+  color: var(--accent);
+}
+
+.sidebar__brand-name {
+  font-family: var(--font-display);
+  font-size: var(--text-base);
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+
+.sidebar__nav {
+  display: grid;
+  gap: 2px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.sidebar__link {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  width: 100%;
+  padding: 7px var(--space-2);
+  font-size: var(--text-sm);
+  color: var(--text-secondary);
+  text-align: left;
+  cursor: pointer;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: var(--radius-md);
+}
+
+.sidebar__link svg {
+  flex: 0 0 auto;
+  color: var(--text-muted);
+}
+
+.sidebar__link:hover {
+  color: var(--text);
+  background: var(--surface-hover);
+}
+
+.sidebar__link[aria-current="page"] {
+  font-weight: 600;
+  color: var(--text);
+  background: var(--surface);
+  border-color: var(--border);
+  box-shadow: var(--shadow-1);
+}
+
+.sidebar__link[aria-current="page"] svg {
+  color: var(--accent);
+}
+
+.sidebar__footer {
+  display: grid;
+  gap: var(--space-1);
+  margin-top: auto;
+  padding: var(--space-3) var(--space-2) 0;
+  font-size: var(--text-xs);
+  color: var(--text-muted);
+  border-top: 1px solid var(--border);
+}
+
+.sidebar__status {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.sidebar__version {
+  font-family: var(--font-mono);
+  font-size: var(--text-2xs);
+  letter-spacing: 0.01em;
+}
+
+.status-dot {
+  flex: 0 0 auto;
+  width: 7px;
+  height: 7px;
+  background: var(--text-muted);
+  border-radius: 50%;
+}
+
+.status-dot--ok {
+  background: var(--accent);
+}
+
+.status-dot--error {
+  background: var(--danger);
+}
