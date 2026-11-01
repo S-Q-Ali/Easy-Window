@@ -12,11 +12,14 @@
 //! those processes report nothing here, so the disk and GPU totals are a floor
 //! rather than a census; `unmeasured_processes` is how a reader knows.
 
+use serde::Serialize;
+
 use super::gpu::{GpuOutcome, GpuReport};
 use super::process::ProcessSnapshot;
 
 /// One process with its metrics for this tick.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct ProcessMetrics {
     pub process: ProcessSnapshot,
     /// Sum over this process's sampled GPU engines, from the most recent GPU
@@ -27,7 +30,15 @@ pub struct ProcessMetrics {
 }
 
 /// What the GPU sampler can say about this machine right now.
-#[derive(Debug, Clone, PartialEq, Eq)]
+///
+/// Serialized as one tagged union: `kind` says which state it is, and a reader
+/// never has to infer "warming" from a missing field.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(
+    tag = "kind",
+    rename_all = "snake_case",
+    rename_all_fields = "camelCase"
+)]
 pub enum GpuTelemetry {
     /// The counter is armed and waiting for its first full interval.
     Warming,
@@ -44,7 +55,8 @@ pub enum GpuTelemetry {
 }
 
 /// Machine-wide figures for one tick.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct SystemSummary {
     /// The whole machine, from `sysinfo`, which measures it directly. The
     /// per-process CPU figures do not add up to this: they cover only the
@@ -64,7 +76,8 @@ pub struct SystemSummary {
 }
 
 /// Everything one tick produced.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct Tick {
     /// Counts process ticks from 1, so a reader can tell two ticks apart.
     pub sequence: u64,
@@ -339,5 +352,67 @@ mod tests {
                 reason: "no engine".to_string()
             }
         );
+    }
+
+    #[test]
+    fn a_tick_serializes_with_the_names_the_ui_reads() {
+        let rows = vec![row(4712, Some(12.5), Some(1_000.0), None, Some(3.0))];
+        let tick = Tick {
+            sequence: 7,
+            processes: rows.clone(),
+            summary: summarise(&rows, Some(41.0)),
+            gpu: GpuTelemetry::Sampling {
+                engines_sampled: 2,
+                engines_unsampled: 0,
+                unparsed: 0,
+            },
+            gpu_sequence: Some(5),
+        };
+
+        let json = serde_json::to_value(&tick).expect("a tick serializes");
+
+        assert_eq!(json["sequence"], 7);
+        assert_eq!(json["gpuSequence"], 5);
+        assert_eq!(json["summary"]["cpuPercent"], 41.0);
+        assert_eq!(json["summary"]["processCount"], 1);
+        assert_eq!(json["summary"]["unmeasuredProcesses"], 0);
+
+        let process = &json["processes"][0];
+        assert_eq!(process["process"]["pid"], 4712);
+        assert_eq!(process["process"]["cpuPercent"], 12.5);
+        assert_eq!(
+            process["process"]["diskWriteBytesPerSec"],
+            serde_json::Value::Null
+        );
+        assert_eq!(
+            process["process"]["criticalReason"],
+            serde_json::Value::Null
+        );
+        assert_eq!(process["gpuPercent"], 3.0);
+    }
+
+    #[test]
+    fn the_gpu_state_serializes_as_one_union_the_ui_can_switch_on() {
+        // Every state has to be distinguishable from JSON alone, or the UI cannot
+        // tell "warming" from "this machine has no GPU counter".
+        let warming = serde_json::to_value(GpuTelemetry::Warming).expect("warming");
+        let sampling = serde_json::to_value(GpuTelemetry::Sampling {
+            engines_sampled: 307,
+            engines_unsampled: 11,
+            unparsed: 0,
+        })
+        .expect("sampling");
+        let unavailable = serde_json::to_value(GpuTelemetry::Unavailable {
+            reason: "no \\GPU Engine object".to_string(),
+        })
+        .expect("unavailable");
+
+        assert_eq!(warming["kind"], "warming");
+        assert_eq!(sampling["kind"], "sampling");
+        assert_eq!(sampling["enginesSampled"], 307);
+        assert_eq!(sampling["enginesUnsampled"], 11);
+        assert_eq!(sampling["unparsed"], 0);
+        assert_eq!(unavailable["kind"], "unavailable");
+        assert_eq!(unavailable["reason"], "no \\GPU Engine object");
     }
 }

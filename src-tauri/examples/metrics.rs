@@ -75,6 +75,7 @@ fn main() {
     let mut peak_ram = 0u64;
     let mut rows = Spread::default();
     let mut unmeasured = Spread::default();
+    let mut payload_bytes = Spread::default();
     let mut gpu = GpuCounts::default();
 
     println!(
@@ -86,6 +87,12 @@ fn main() {
         let tick = scheduler.tick();
         let elapsed = start.elapsed();
         timings.add(elapsed);
+
+        // Sized outside the tick above. Task 7 has to send this many bytes per
+        // tick, and the figure it needs is the size, not a polluted timing.
+        if let Ok(json) = serde_json::to_vec(&tick) {
+            payload_bytes.observe(json.len() / 1024);
+        }
 
         if let Some(row) = tick.processes.iter().find(|row| row.process.pid == own_pid) {
             if let Some(cpu) = row.process.cpu_percent {
@@ -159,7 +166,7 @@ fn main() {
         timings.mean().as_secs_f32() / interval.as_secs_f32() * 100.0
     );
     println!(
-        "rows {rows} | no CPU figure {unmeasured} | gpu: {}",
+        "rows {rows} | no CPU figure {unmeasured} | tick json {payload_bytes} KB | gpu: {}",
         gpu.summary()
     );
 }
