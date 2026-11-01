@@ -88,12 +88,27 @@ Spec: `docs/SPEC.md`
       instances with zero unparsed, ~1 ms to aggregate per tick.
     - Files: `src-tauri/src/monitor/gpu.rs`, `src-tauri/examples/pdh.rs`.
 
-  - [ ] **6.4** `monitor/types.rs` + `monitor/scheduler.rs`: tick loop and system totals.
+  - [x] **6.4** `monitor/types.rs` + `monitor/scheduler.rs`: tick loop and system totals.
     - Acceptance: a background tick produces `ProcessMetrics` + `SystemSummary` on the
       configured interval; GPU may tick slower than CPU/disk; the scheduler owns the
       sampler and the signature cache; stopping the loop leaves no thread behind.
     - Verify: `cargo test`; run for 60 s and report the app's own CPU.
-    - Files: `src-tauri/src/monitor/types.rs`, `src-tauri/src/monitor/scheduler.rs`.
+    - Done: the scheduler owns both samplers and the one signature cache, snapshots
+      processes every second and GPU engines every two, and publishes a whole `Tick` into
+      a shared slot, so a reader clones the newest tick instead of waiting on a sample.
+      GPU figures carry the sequence of the tick that read them: a two-second-old engine
+      number is never presented as a one-second-old one, `Warming` keeps the previous
+      report and its stamp, and a machine that stops answering loses the GPU column
+      rather than showing numbers next to "no GPU counter". `spawn` runs the loop on one
+      thread and `stop` joins it, so no thread outlives the handle. `ProcessSampler` grew
+      `system_cpu_percent()` for the total, `None` until `sysinfo` has two windows to
+      compare. 103 tests pass, 8 of them here; the 60 s release probe measured mean
+      0.65 % CPU, max 0.99 %, 19 MB peak RAM, 296 GPU engines sampled with none unparsed.
+      One measured fact to carry into Task 7: 129 of 260 rows report no CPU because
+      Windows would not give their path — nearly half the table, not the ~75 of 280
+      `AGENTS.md` currently records.
+    - Files: `src-tauri/src/monitor/types.rs`, `src-tauri/src/monitor/scheduler.rs`,
+      `src-tauri/src/monitor/process.rs`, `src-tauri/src/monitor/gpu.rs`.
 
   - [ ] **6.5** Overhead harness and documentation.
     - Acceptance: `cargo run --example metrics` prints per-tick timing and self CPU; the

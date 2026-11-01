@@ -193,6 +193,18 @@ and five one-second ticks; run it with `cargo run --example pdh`.
   `pid_<n>_luid_0x_-prefixed-hex_0x_-prefixed-hex_phys_<n>_eng_<n>_engtype_<verbatim>`;
   type counts varied between captures (60 empty types then, ~80 now), which is exactly
   why the type is kept as a string, never an enum.
+- **The 6.4 loop keeps the idle budget:** 60 ticks of the default clocks (1 s process,
+  2 s GPU) in release cost a mean **0.65 % CPU**, max 0.99 %, and **19 MB** peak RAM —
+  both inside the <1 % / <80 MB target. A warm tick is ~101 ms of wall time against a
+  cold first tick of **10.1 s**, which is the Task 5 signature cost, not the sampling
+  cost: the wall time is mostly waiting inside Windows, since the process's own CPU
+  stayed under 1 % while it ran. GPU engines sampled 296, unsampled 0, unparsed 0;
+  3 of the 60 ticks were warming, as D4's first-collect rule predicts.
+- **The machine total agrees with the OS:** `sysinfo`'s figure read 88.8–90.6 % in that
+  minute while `Get-Counter '\Processor(_Total)\% Processor Time'` read 95.4–97.0 % and
+  `'\Processor Information(_Total)\% Processor Time'` read 86.6 %. The two OS counters
+  disagree with each other on this CPU, so `sysinfo` is within the spread — the
+  per-process column is not expected to add up to it either.
 
 ### Sources
 
