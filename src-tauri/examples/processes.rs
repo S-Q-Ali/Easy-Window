@@ -8,7 +8,7 @@
 
 #[cfg(windows)]
 fn main() {
-    use std::time::Instant;
+    use std::time::{Duration, Instant};
 
     use easy_window_lib::monitor::process::ProcessSampler;
 
@@ -21,19 +21,24 @@ fn main() {
     };
 
     let started = Instant::now();
-    let snapshot = sampler.snapshot();
+    let first = sampler.snapshot();
     let cold = started.elapsed();
 
     let started = Instant::now();
-    let second = sampler.snapshot();
+    sampler.snapshot();
     let warm = started.elapsed();
 
+    // CPU and disk figures are deltas between two refreshes, so the table reads
+    // from a snapshot taken one second later — the cadence the UI will use.
+    std::thread::sleep(Duration::from_secs(1));
+    let sampled = sampler.snapshot();
+
     println!(
-        "{:<7} {:<7} {:<5} {:<30} {:<9} {:<30} WINDOW TITLE / PATH",
-        "PID", "PPID", "SESS", "NAME", "SIGNATURE", "PUBLISHER"
+        "{:<7} {:<7} {:<5} {:>6} {:>9} {:>11} {:>11} {:<30} {:<9} {:<30} WINDOW TITLE / PATH",
+        "PID", "PPID", "SESS", "CPU%", "MEM", "READ/s", "WRITE/s", "NAME", "SIGNATURE", "PUBLISHER"
     );
 
-    for process in &snapshot {
+    for process in &sampled {
         let parent = process
             .parent_pid
             .map(|pid| pid.to_string())
@@ -46,10 +51,17 @@ fn main() {
         let critical = process.critical_reason.map(|reason| reason.label());
 
         println!(
-            "{:<7} {:<7} {:<5} {:<30} {:<9} {:<30} {}",
+            "{:<7} {:<7} {:<5} {:>6} {:>9} {:>11} {:>11} {:<30} {:<9} {:<30} {}",
             process.pid,
             parent,
             session,
+            process
+                .cpu_percent
+                .map(|cpu| format!("{cpu:.1}"))
+                .unwrap_or_else(|| "-".to_string()),
+            bytes(process.memory_bytes as f64),
+            rate(process.disk_read_bytes_per_sec),
+            rate(process.disk_write_bytes_per_sec),
             truncate(&process.name, 30),
             format!("{:?}", process.signature),
             truncate(publisher, 30),
@@ -67,10 +79,11 @@ fn main() {
         }
     }
 
-    println!("\n{} processes", snapshot.len());
+    println!("\n{} processes", sampled.len());
     println!(
-        "cold snapshot {cold:?}, warm snapshot {warm:?}, {} processes on the second pass",
-        second.len()
+        "cold snapshot {cold:?} ({} processes), warm snapshot {warm:?}, sampled over the last second: {} processes",
+        first.len(),
+        sampled.len()
     );
 
     fn truncate(value: &str, max: usize) -> String {
@@ -81,6 +94,23 @@ fn main() {
             truncated.push('…');
             truncated
         }
+    }
+
+    fn bytes(value: f64) -> String {
+        const KILOBYTE: f64 = 1024.0;
+        if value < KILOBYTE {
+            format!("{value:.0}B")
+        } else if value < KILOBYTE * KILOBYTE {
+            format!("{:.1}KB", value / KILOBYTE)
+        } else {
+            format!("{:.1}MB", value / (KILOBYTE * KILOBYTE))
+        }
+    }
+
+    fn rate(bytes_per_second: Option<f64>) -> String {
+        bytes_per_second
+            .map(|value| format!("{}/s", bytes(value)))
+            .unwrap_or_else(|| "-".to_string())
     }
 }
 

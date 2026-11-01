@@ -19,7 +19,7 @@ use std::mem::size_of;
 use std::os::windows::ffi::OsStrExt;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
-use std::time::UNIX_EPOCH;
+use std::time::{Duration, Instant, UNIX_EPOCH};
 
 use serde::Serialize;
 use sysinfo::{Pid, ProcessesToUpdate, System};
@@ -97,6 +97,13 @@ pub struct ProcessSnapshot {
     /// recycled PID from the process the user actually selected.
     pub start_time: u64,
     pub memory_bytes: u64,
+    /// Share of the whole machine, so one saturated core on an eight-core PC
+    /// reads 12.5 — the number Task Manager shows next to the same process.
+    /// `None` means unmeasured, never idle: the first tick has no window yet,
+    /// and a process whose handle is unavailable cannot be sampled at all.
+    pub cpu_percent: Option<f32>,
+    pub disk_read_bytes_per_sec: Option<f64>,
+    pub disk_write_bytes_per_sec: Option<f64>,
     pub critical_reason: Option<CriticalReason>,
     /// False for every process the UI must refuse to close.
     pub selectable: bool,
@@ -173,6 +180,9 @@ pub struct ProcessSampler {
     system: System,
     signatures: SignatureCache,
     system_dirs: Vec<PathBuf>,
+    /// When the previous snapshot finished. CPU and disk rates are deltas
+    /// between two snapshots, so the first one has no window to divide by.
+    last_tick: Option<Instant>,
 }
 
 impl ProcessSampler {
@@ -185,26 +195,40 @@ impl ProcessSampler {
             system: System::new()?,
             signatures,
             system_dirs: trusted_system_dirs(),
+            last_tick: None,
         })
     }
 
     /// Refreshes the process list and returns a stable, PID-sorted snapshot.
     pub fn snapshot(&mut self) -> Vec<ProcessSnapshot> {
         self.system.refresh_processes(ProcessesToUpdate::All, true);
+        let elapsed = self
+            .last_tick
+            .replace(Instant::now())
+            .map(|start| start.elapsed());
+        // sysinfo scales its raw CPU figure by this same count, so dividing by
+        // it converts to a share of the machine.
+        let logical_cores = self.system.cpus().len();
         let window_titles = window_titles_by_pid();
 
         let raw: Vec<RawProcess> = self
             .system
             .processes()
             .iter()
-            .map(|(pid, process)| RawProcess {
-                pid: pid.as_u32(),
-                parent_pid: process.parent().map(Pid::as_u32),
-                name: process.name().to_string_lossy().into_owned(),
-                exe_path: process.exe().map(Path::to_path_buf),
-                session_id: process.session_id().map(Pid::as_u32),
-                start_time: process.start_time(),
-                memory_bytes: process.memory(),
+            .map(|(pid, process)| {
+                let disk = process.disk_usage();
+                RawProcess {
+                    pid: pid.as_u32(),
+                    parent_pid: process.parent().map(Pid::as_u32),
+                    name: process.name().to_string_lossy().into_owned(),
+                    exe_path: process.exe().map(Path::to_path_buf),
+                    session_id: process.session_id().map(Pid::as_u32),
+                    start_time: process.start_time(),
+                    memory_bytes: process.memory(),
+                    cpu_usage: process.cpu_usage(),
+                    read_bytes: disk.read_bytes,
+                    written_bytes: disk.written_bytes,
+                }
             })
             .collect();
 
@@ -222,6 +246,20 @@ impl ProcessSampler {
                 };
                 let critical_reason = denylist::assess(&facts, &self.system_dirs);
 
+                // Without a readable path there is no open handle, and sysinfo
+                // reports a permanent zero for those processes. That zero must
+                // stay `None`, or the table would call an unmeasurable process
+                // idle.
+                let (cpu_percent, disk_read_bytes_per_sec, disk_write_bytes_per_sec) =
+                    match (elapsed, process.exe_path.is_some()) {
+                        (Some(elapsed), true) => (
+                            cpu_percentage(process.cpu_usage, logical_cores),
+                            bytes_per_sec(process.read_bytes, elapsed),
+                            bytes_per_sec(process.written_bytes, elapsed),
+                        ),
+                        _ => (None, None, None),
+                    };
+
                 ProcessSnapshot {
                     pid: process.pid,
                     parent_pid: process.parent_pid,
@@ -237,6 +275,9 @@ impl ProcessSampler {
                     window_title: window_titles.get(&process.pid).cloned(),
                     start_time: process.start_time,
                     memory_bytes: process.memory_bytes,
+                    cpu_percent,
+                    disk_read_bytes_per_sec,
+                    disk_write_bytes_per_sec,
                     critical_reason,
                     selectable: critical_reason.is_none(),
                 }
@@ -294,6 +335,25 @@ struct RawProcess {
     session_id: Option<u32>,
     start_time: u64,
     memory_bytes: u64,
+    cpu_usage: f32,
+    read_bytes: u64,
+    written_bytes: u64,
+}
+
+/// Converts sysinfo's per-core CPU figure into a share of the whole machine.
+fn cpu_percentage(cpu_usage: f32, logical_cores: usize) -> Option<f32> {
+    if logical_cores == 0 {
+        return None;
+    }
+    Some(cpu_usage / logical_cores as f32)
+}
+
+/// Converts bytes counted between two snapshots into a per-second rate.
+fn bytes_per_sec(bytes: u64, elapsed: Duration) -> Option<f64> {
+    if elapsed.is_zero() {
+        return None;
+    }
+    Some(bytes as f64 / elapsed.as_secs_f64())
 }
 
 /// Verifies a file without network access: embedded signature first, then a
@@ -971,5 +1031,73 @@ mod tests {
 
         assert_eq!(first, second);
         assert_eq!(sampler.signatures.len(), 1);
+    }
+
+    #[test]
+    fn cpu_usage_is_reported_as_a_share_of_the_whole_machine() {
+        // sysinfo reports 100% per saturated logical core, so a process using one
+        // of eight cores arrives as 100.0. Task Manager shows the same process at
+        // 12.5%, and that is the number the user will compare against.
+        assert_eq!(cpu_percentage(800.0, 8), Some(100.0));
+        assert_eq!(cpu_percentage(100.0, 8), Some(12.5));
+        assert_eq!(cpu_percentage(0.0, 8), Some(0.0));
+    }
+
+    #[test]
+    fn a_machine_without_a_known_core_count_has_no_cpu_percentage() {
+        assert_eq!(cpu_percentage(100.0, 0), None);
+    }
+
+    #[test]
+    fn disk_bytes_between_ticks_become_a_rate() {
+        assert_eq!(
+            bytes_per_sec(2048, Duration::from_millis(500)),
+            Some(4096.0)
+        );
+        assert_eq!(bytes_per_sec(0, Duration::from_millis(500)), Some(0.0));
+    }
+
+    #[test]
+    fn a_rate_needs_time_to_have_passed() {
+        // Dividing by a zero-length window is how a snapshot invents infinity.
+        assert_eq!(bytes_per_sec(2048, Duration::ZERO), None);
+    }
+
+    #[test]
+    fn the_first_tick_has_no_cpu_or_disk_samples() {
+        let mut sampler = sampler();
+
+        for process in sampler.snapshot() {
+            assert!(
+                process.cpu_percent.is_none()
+                    && process.disk_read_bytes_per_sec.is_none()
+                    && process.disk_write_bytes_per_sec.is_none(),
+                "pid {} ({}) was sampled before anything was sampled",
+                process.pid,
+                process.name
+            );
+        }
+    }
+
+    #[test]
+    fn a_later_tick_samples_cpu_and_disk_for_this_process() {
+        let mut sampler = sampler();
+        sampler.snapshot();
+        std::thread::sleep(sysinfo::MINIMUM_CPU_UPDATE_INTERVAL * 2);
+        let own_pid = std::process::id();
+
+        let myself = sampler
+            .snapshot()
+            .into_iter()
+            .find(|process| process.pid == own_pid)
+            .expect("this test process is in its own snapshot");
+
+        assert!(
+            myself.cpu_percent.is_some(),
+            "a second tick must report a number, even a zero"
+        );
+        assert!(myself.disk_read_bytes_per_sec.is_some());
+        assert!(myself.disk_write_bytes_per_sec.is_some());
+        assert!(myself.cpu_percent.unwrap_or_default() >= 0.0);
     }
 }
