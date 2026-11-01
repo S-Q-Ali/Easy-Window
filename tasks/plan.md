@@ -126,6 +126,45 @@ Status: proposed, waiting for approval. Sub-tasks are in `tasks/todo.md`.
   `Win32_System_Performance` feature; `PDH_COUNTER_PATH_ELEMENTS_W` is the struct name
   (there is no `_T` alias) and `PdhSetCounterTimeScale` is **not** in the bindings.
 
+### Corrected by the documentation pass
+
+- **There is no `PDH_CSTATUS_NEW_INSTANCE`.** The real status pair is
+  `PDH_CSTATUS_VALID_DATA` (valid, possibly unchanged) and `PDH_CSTATUS_NEW_DATA`
+  (valid and changed). Only those two count as a sample; every other CStatus is skipped
+  per item, never propagated as an error — PDH functions return plain `u32` status codes.
+- **Engine types are not a fixed list.** This box reports `3D`, `VideoDecode`,
+  `VideoProcessing`, `Copy`, `LegacyOverlay`, `GDI Render` (the token **contains a
+  space**), `Security`, and the empty string. The parser must take everything after
+  `engtype_` verbatim, and `\GPU Process Memory` instances end at `_phys_0` with no
+  `_eng_` suffix at all — that object is where per-PID VRAM (`Dedicated Usage`,
+  `Shared Usage`) lives, useful for Task 7 but not required now.
+- **Buffer units differ by call:** TCHAR counts for `PdhEnumObjectItemsW` and
+  `PdhMakeCounterPathW`, **bytes** for `PdhGetFormattedCounterArrayW`. The array call
+  also warns that a too-small input size does not reliably report the needed size, so
+  the probe always starts from zero or keeps a high-water buffer.
+- **`PdhEnumObjectItemsW` results are cached**, so a "GPU Engine is missing" verdict must
+  come after `PdhEnumObjectsW(bRefresh = TRUE)` — otherwise a driver installed while the
+  app runs stays invisible.
+- **`PDH_FMT_NOCAP100` is not in the bindings.** It only matters for
+  `\Process(*)\% Processor Time`, which PDH silently caps at 100 — decision D1 avoids
+  that trap by taking CPU from `sysinfo` instead.
+- **Cost proxy:** `typeperf`-style sampling of `\Process(*)` ran ~3.2 s and
+  `\GPU Engine(*)` ~5.2 s for two samples, but those runs are startup-dominated. The
+  in-app number, with a reused query and one collect, is what 6.2 must measure.
+- **Fallback if wildcard parsing proves fragile:** `D3DKMTQueryStatistics`
+  (`windows::Wdk::Graphics::Direct3D`, feature `Wdk_Graphics_Direct3D`) attributes GPU
+  time straight to a PID with no name parsing, and is what System Informer uses
+  (`gpumon.c`, which also **sums** running time across nodes).
+
+### Sources
+
+PDH lifecycle, statuses and paths: `PdhOpenQuery`/`PdhAddEnglishCounterW`,
+`PdhCollectQueryData`, `PdhGetFormattedCounterArrayW`, `PdhEnumObjectItemsW`,
+`PdhEnumObjectsW`, `PdhMakeCounterPathW`, the PDH error-code list, and "Checking Counter
+Data Status Codes" on learn.microsoft.com. GPU aggregation practice: System Informer
+`plugins/ExtendedTools/gpumon.c` and TaskExplorer `GpuCounters.c`. CPU/disk alternative:
+`GetProcessTimes` and `GetSystemTimes` (note kernel time includes idle).
+
 ### Decisions
 
 - **D1 — PDH is only for GPU.** CPU % and disk B/s come from `sysinfo`, which already
