@@ -37,7 +37,7 @@ Spec: `docs/SPEC.md`
     Task Manager with `cargo run --manifest-path src-tauri/Cargo.toml --example processes`.
   - Files: `src-tauri/src/monitor/process.rs`, `src-tauri/src/risk/denylist.rs`, tests.
 
-- [ ] **Task 6: Per-process telemetry (CPU, disk, GPU)**
+- [x] **Task 6: Per-process telemetry (CPU, disk, GPU)**
   - Design and decisions: `tasks/plan.md` → "Task 6 design".
   - Acceptance: CPU %, disk B/s and GPU % per process; system totals; a metric that was
     not sampled is `None`, never a misleading zero; a machine without `\GPU Engine`
@@ -102,19 +102,39 @@ Spec: `docs/SPEC.md`
       rather than showing numbers next to "no GPU counter". `spawn` runs the loop on one
       thread and `stop` joins it, so no thread outlives the handle. `ProcessSampler` grew
       `system_cpu_percent()` for the total, `None` until `sysinfo` has two windows to
-      compare. 103 tests pass, 8 of them here; the 60 s release probe measured mean
-      0.65 % CPU, max 0.99 %, 19 MB peak RAM, 296 GPU engines sampled with none unparsed.
-      One measured fact to carry into Task 7: 129 of 260 rows report no CPU because
-      Windows would not give their path — nearly half the table, not the ~75 of 280
-      `AGENTS.md` currently records.
+      compare. 103 tests pass, 8 of them here. What the loop costs to run is measured in
+      6.5, not claimed here.
+      One measured fact to carry into Task 7: about half the table reports no CPU because
+      Windows would not give those processes' paths — 131 of 274 rows on average, confirmed
+      by the 6.5 record, not the ~75 of 280 `AGENTS.md` originally recorded.
     - Files: `src-tauri/src/monitor/types.rs`, `src-tauri/src/monitor/scheduler.rs`,
       `src-tauri/src/monitor/process.rs`, `src-tauri/src/monitor/gpu.rs`.
 
-  - [ ] **6.5** Overhead harness and documentation.
+  - [x] **6.5** Overhead harness and documentation.
     - Acceptance: `cargo run --example metrics` prints per-tick timing and self CPU; the
       `AGENTS.md` GPU aggregation note matches what the code does.
     - Verify: 10-minute run recorded in the commit message; `npm run verify`.
-    - Files: `src-tauri/examples/metrics.rs`, `AGENTS.md`.
+    - Done: `src-tauri/examples/metrics.rs` drives `Scheduler::tick()` at the loop's own
+      cadence — read from `DEFAULT_PROCESS_INTERVAL` rather than a number copied into the
+      harness — and separates the cold first tick, which verifies every signature, from the
+      steady state. It prints per-tick wall time (min/median/mean/max), the sampling
+      process's own CPU and peak RAM against the budget, duty cycle, the GPU verdict
+      counts, and the min/mean/max of the row count and the unmeasured rows, because a
+      peak alone hid that 271-of-292 was a one-tick spike.
+    - Measured over 600 s on this machine (2026-11-02): first tick 8.26 s, then 599 ticks
+      at min 41.9 ms / median 259.9 ms / mean 372.0 ms / max 4.07 s — a 37.2 % duty on a
+      one-second interval. Own CPU mean 0.963 %, median 0.916 %, peak 5.769 %, with 230 of
+      599 ticks at or over the 1 % budget: the average is inside it, individual ticks are
+      not, so Task 11 cannot treat this number as settled. Peak RAM 19 MB against 80 MB.
+      Rows 260/274/302 (min/mean/max); rows with no CPU figure 129/131/286, which confirms
+      the 6.4 reading — the 286 is the first tick, which has no window to measure over.
+      GPU: 599 ticks collected, one did not (the first, `Warming`), peak 318 engines
+      sampled, 11 unsampled, none unparsed.
+    - Two facts to carry forward: a tick can overrun its own interval by four times, so the
+      UI must not assume 1 Hz, and the harness prints the cadence from the scheduler so the
+      two cannot drift apart.
+    - Files: `src-tauri/examples/metrics.rs`, `src-tauri/src/monitor/scheduler.rs`,
+      `AGENTS.md`.
 
 - [ ] **Task 7: Process table UI**
   - Acceptance: Sort/filter by CPU/RAM/disk/GPU; sparklines; keyboard accessible; empty/error/loading states.
