@@ -23,12 +23,13 @@ use super::process::{ProcessSampler, SignatureCache};
 use super::types::{self, GpuTelemetry, Tick};
 
 /// A process snapshot per second is enough to see a process start and stop, and
-/// keeps the sampler's own cost well inside the idle budget.
-const DEFAULT_PROCESS_INTERVAL: Duration = Duration::from_secs(1);
+/// keeps the sampler's own cost well inside the idle budget. Public because the
+/// overhead harness must sample at the loop's real cadence, not its own guess.
+pub const DEFAULT_PROCESS_INTERVAL: Duration = Duration::from_secs(1);
 
 /// GPU engines are the expensive part of the counter read — instance counts in
 /// the hundreds — so they refresh slower than processes.
-const DEFAULT_GPU_INTERVAL: Duration = Duration::from_secs(2);
+pub const DEFAULT_GPU_INTERVAL: Duration = Duration::from_secs(2);
 
 /// Why the scheduler could not start.
 #[derive(Debug, thiserror::Error)]
