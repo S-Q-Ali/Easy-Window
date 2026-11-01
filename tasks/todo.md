@@ -137,9 +137,31 @@ Spec: `docs/SPEC.md`
       `AGENTS.md`.
 
 - [ ] **Task 7: Process table UI**
+  - Design and decisions: `tasks/plan.md` → "Task 7 design" (T1–T9 approved 2026-11-02).
   - Acceptance: Sort/filter by CPU/RAM/disk/GPU; sparklines; keyboard accessible; empty/error/loading states.
-  - Verify: Manual UI pass; `npm test`; axe check.
-  - Files: `src/pages/Processes/*`, `src/components/ProcessTable/*`, `src-tauri/src/commands/processes.rs`.
+  - Verify: Manual UI pass in the running app; `npm test` (Vitest + Testing Library + axe on the table); `npm run verify`.
+  - Facts this task must design around: 260–302 rows, mean 274; about half of them (131)
+    have no CPU or disk figure and must not render as zero; a tick arrives anywhere between
+    42 ms and 4.1 s after the last one, so nothing may assume 1 Hz; the cold first tick
+    takes 8.3 s, which is the loading state.
+  - [ ] **7.1** Serialize the published shapes: `serde` derives with camelCase keys on
+    `Tick`, `ProcessMetrics`, `ProcessSnapshot`, `SystemSummary`, `GpuTelemetry` and the two
+    enums, a round-trip test on the JSON keys, and the metrics harness printing bytes per
+    tick. Rust only.
+  - [ ] **7.2** Wire the loop to the window: `commands.rs` becomes `commands/mod.rs` plus
+    `commands/processes.rs` with `latest_tick()`; `setup()` spawns the scheduler into
+    managed state and each tick emits `metrics://tick`. Prove the emit reaches the webview
+    from the sampling thread.
+  - [ ] **7.3** `ProcessTable`: sortable headers on CPU/RAM/disk/GPU/name, name+PID filter,
+    em dash for `None` sorting last, the stale-GPU marker from `gpuSequence`, and
+    empty/loading/error states. Real buttons with `aria-sort`.
+  - [ ] **7.4** Sparklines: webview ring buffer keyed by `pid`+`startTime`, last 60 samples
+    per metric, inline SVG marked hidden from assistive tech with the number in text.
+  - [ ] **7.5** UI test stack: Vitest + Testing Library + axe as dev dependencies, an
+    `npm test` script wired into `npm run verify`, and table tests for sorting, the `None`
+    em dash, keyboard access and recycled-PID row identity.
+  - Files: `src/pages/Processes/*`, `src/components/ProcessTable/*`,
+    `src-tauri/src/commands/processes.rs`, `src-tauri/src/monitor/types.rs`.
 
 - [ ] **Task 8: Process risk score**
   - Acceptance: Score explains reasons; no critical process can be marked safe; user can ignore a process.

@@ -316,7 +316,7 @@ Tauri 2: `tauri::Emitter` (`AppHandle::emit`), `@tauri-apps/api/event` `listen`,
 that must not re-render on an unrelated state change; inline SVG for the sparkline,
 no charting dependency.
 
-### Decisions (proposed, awaiting approval)
+### Decisions (approved by the user, 2026-11-02)
 
 - **T1 — one scheduler, owned by the app.** `setup()` builds `Scheduler::new()?` and
   `spawn()`s it into managed state; the app stops it on exit. A second instance would
@@ -343,6 +343,11 @@ no charting dependency.
   fix is a slimmer event, decided on the number — not preemptively.
 - **T8 — Task 7 ships no pause-when-hidden and no EcoQoS.** Task 11 owns the budget and
   the window events; this task only starts and stops the loop with the app.
+- **T9 — the UI gets a real test stack.** The chosen answer to the verification gap is
+  Vitest + Testing Library + axe on the table component, so `npm test` exists and Task 7's
+  verify line means what it says. Dev-only dependencies; nothing ships in the bundle.
+  Sorting, the em dash for `None`, keyboard reachability and row identity are the cases
+  worth proving, because those are the ones a manual pass misses.
 
 ### Sub-tasks
 
@@ -356,9 +361,9 @@ no charting dependency.
    accessible with `aria-sort` on real buttons.
 4. **7.4 Sparklines.** The webview ring buffer keyed by `pid`+`startTime`, inline SVG,
    hidden from assistive tech with the numeric value in text beside it.
-5. **7.5 The verification gap.** Either add a JS test stack (a new dependency set) or
-   correct Task 7's verify line to what actually runs. The user decides; a manual UI
-   pass gets recorded either way.
+5. **7.5 The UI test stack.** Vitest + Testing Library + axe as dev dependencies, an
+   `npm test` script, and table tests for sorting, the `None` em dash, keyboard access and
+   row identity; `npm run verify` gains the `npm test` step so the gate covers the UI.
 
 ## Risks and mitigations
 
