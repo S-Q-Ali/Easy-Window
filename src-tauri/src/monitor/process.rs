@@ -183,6 +183,10 @@ pub struct ProcessSampler {
     /// When the previous snapshot finished. CPU and disk rates are deltas
     /// between two snapshots, so the first one has no window to divide by.
     last_tick: Option<Instant>,
+    /// Whether the machine's own idle/busy counters have been read once. The
+    /// first read only records a baseline; it has no previous value to compare
+    /// against, and `sysinfo` reports zero for it.
+    system_cpu_sampled: bool,
 }
 
 impl ProcessSampler {
@@ -196,6 +200,7 @@ impl ProcessSampler {
             signatures,
             system_dirs: trusted_system_dirs(),
             last_tick: None,
+            system_cpu_sampled: false,
         })
     }
 
@@ -286,6 +291,18 @@ impl ProcessSampler {
 
         snapshot.sort_by_key(|process| process.pid);
         snapshot
+    }
+
+    /// The whole machine's CPU as a share of itself, over the window between
+    /// two calls. `None` until there is such a window: `sysinfo` answers zero
+    /// for a baseline it has nothing to compare, and a zero here would read as
+    /// an idle machine.
+    pub fn system_cpu_percent(&mut self) -> Option<f64> {
+        let has_baseline = self.system_cpu_sampled;
+        self.system_cpu_sampled = true;
+        self.system.refresh_cpu_usage();
+
+        has_baseline.then(|| self.system.global_cpu_usage() as f64)
     }
 
     fn signature_for(&self, path: Option<&Path>) -> SignatureInfo {
@@ -1099,5 +1116,32 @@ mod tests {
         assert!(myself.disk_read_bytes_per_sec.is_some());
         assert!(myself.disk_write_bytes_per_sec.is_some());
         assert!(myself.cpu_percent.unwrap_or_default() >= 0.0);
+    }
+
+    #[test]
+    fn the_machine_cpu_has_no_figure_before_its_second_window() {
+        let mut sampler = sampler();
+
+        assert_eq!(
+            sampler.system_cpu_percent(),
+            None,
+            "the first refresh has no previous idle/busy counters to compare"
+        );
+    }
+
+    #[test]
+    fn the_machine_cpu_has_a_figure_once_two_windows_are_sampled() {
+        let mut sampler = sampler();
+        sampler.system_cpu_percent();
+        std::thread::sleep(sysinfo::MINIMUM_CPU_UPDATE_INTERVAL * 2);
+
+        let Some(cpu) = sampler.system_cpu_percent() else {
+            panic!("two sampled windows must give the machine a CPU figure");
+        };
+
+        assert!(
+            (0.0..=100.0).contains(&cpu),
+            "machine CPU must be a share of the whole, got {cpu}"
+        );
     }
 }

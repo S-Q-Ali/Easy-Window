@@ -210,9 +210,10 @@ pub struct GpuSampler {
     attempts: u32,
 }
 
-// Safety: PDH handles are raw pointers and are not thread-safe, so this
-// sampler is confined to the thread that owns it — every read goes through
-// `&mut self` and no reference to the query ever escapes.
+// Safety: PDH handles are raw pointers and are not thread-safe, so the rule is
+// that one thread may use the query at a time. `&mut self` enforces that and no
+// reference to the query escapes the sampler, so handing the sampler to another
+// thread — which the tick loop does — cannot put two threads on one handle.
 unsafe impl Send for GpuSampler {}
 
 impl GpuSampler {

@@ -57,7 +57,9 @@ pub struct SystemSummary {
     /// per-process column adds up to, not a single engine's utilisation.
     pub gpu_percent: Option<f64>,
     pub process_count: usize,
-    /// Processes whose CPU and disk Windows would not give us.
+    /// Processes whose CPU and disk Windows would not give us. On a run's very
+    /// first tick this is every process, because that tick has no window to
+    /// measure rates over yet.
     pub unmeasured_processes: usize,
 }
 

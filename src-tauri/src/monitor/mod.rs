@@ -13,6 +13,9 @@ pub mod pdh;
 pub mod process;
 
 #[cfg(windows)]
+pub mod scheduler;
+
+#[cfg(windows)]
 pub mod types;
 
 #[cfg(windows)]
