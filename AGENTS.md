@@ -84,4 +84,4 @@ tests/e2e/            Playwright extension tests
 - Extension build uses **WXT** (MIT). CRXJS has no SPDX license — do not add it.
 - `nickshui/Win-Top` has **no LICENSE file**: ideas only, never copy code or assets.
 - `Moustachauve/cookie-editor` is GPL-3.0 and `sienori/Tab-Session-Manager` is MPL-2.0: do not copy code into this MIT project.
-- PDH GPU aggregation = **max engine utilization per PID**, not a sum; keep the engine type (`3D`, `VideoDecode`, `Copy`).
+- Per-process GPU % = **sum of every engine of that PID over the sample interval** (the Task Manager model), not a max. Keep the engine type (`3D`, `VideoDecode`, `Copy`, and the empty `engtype_` case) and the per-engine breakdown for the tooltip. Process Hacker reports max-per-PID, which is why its number reads lower than Task Manager's for the same process.

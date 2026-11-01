@@ -144,13 +144,15 @@ Status: proposed, waiting for approval. Sub-tasks are in `tasks/todo.md`.
   (no WDDM/driver support), the sampler records the reason and stops trying until the
   next long retry, instead of failing on every tick.
 
-### Open decisions for the user
+### Decisions taken by the user (2026-11-01)
 
-- **GPU aggregation: sum or max per PID.** `AGENTS.md` currently records "max engine
-  utilization per PID, not a sum". Task Manager **sums** all engines of a process
-  (normalised by the sample interval); Process Hacker uses **max**, which is why the two
-  disagree. Recommendation: sum, keep the per-engine breakdown for the tooltip, and
-  correct the `AGENTS.md` gotcha in the same commit.
+- **GPU aggregation: sum per PID** — the Task Manager model, normalised by the sample
+  interval, with the per-engine breakdown kept for the tooltip. `AGENTS.md` said "max,
+  not a sum"; it now says sum, because that is the number the user will compare against.
+  Process Hacker's max-per-PID stays as the explanation for why other tools read lower.
+- **Cadence: process snapshot (CPU + disk) every 1 s, GPU every 2 s.** 336 engine
+  instances is the expensive part on this machine, not the ~290 PIDs. The interval stays
+  a settings value by Task 20.
 
 ### Sub-tasks
 
