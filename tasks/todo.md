@@ -37,10 +37,47 @@ Spec: `docs/SPEC.md`
     Task Manager with `cargo run --manifest-path src-tauri/Cargo.toml --example processes`.
   - Files: `src-tauri/src/monitor/process.rs`, `src-tauri/src/risk/denylist.rs`, tests.
 
-- [ ] **Task 6: PDH telemetry**
-  - Acceptance: CPU %, GPU %, disk B/s sampled per process; system totals; graceful handling of missing counters.
-  - Verify: Manual run on Windows 11; GPU samples map to PIDs; 10-minute overhead check.
-  - Files: `src-tauri/src/monitor/pdh.rs`, `src-tauri/src/monitor/types.rs`, `src-tauri/src/monitor/scheduler.rs`.
+- [ ] **Task 6: Per-process telemetry (CPU, disk, GPU)**
+  - Design and decisions: `tasks/plan.md` → "Task 6 design".
+  - Acceptance: CPU %, disk B/s and GPU % per process; system totals; a metric that was
+    not sampled is `None`, never a misleading zero; a machine without `\GPU Engine`
+    reports why and stops retrying each tick.
+  - Verify: `cargo test`; `cargo run --example metrics` shows per-tick cost and the
+    app's own CPU; spot-check three processes against Task Manager.
+  - Files: `src-tauri/src/monitor/*`, `src-tauri/Cargo.toml`, tests.
+
+  - [ ] **6.1** Expose the CPU and disk rates `sysinfo` already samples.
+    - Acceptance: `ProcessSnapshot` carries `cpu_percent`, `disk_read_bytes_per_sec`,
+      `disk_write_bytes_per_sec`; the first tick is `None`, a later tick is a number.
+    - Verify: unit test on the live snapshot; Task Manager comparison.
+    - Files: `src-tauri/src/monitor/process.rs`.
+
+  - [ ] **6.2** `monitor/pdh.rs`: reusable query wrapper and availability ladder.
+    - Acceptance: one query, wildcard English counters, one collect per tick; every PDH
+      status becomes a named outcome, and an absent object is reported as unavailable
+      rather than an error; handles close on `Drop`.
+    - Verify: example prints `\Process(_Total)\% Processor Time` and the wall time of a
+      warm tick for ~290 processes; `cargo test`.
+    - Files: `src-tauri/src/monitor/pdh.rs`, `src-tauri/Cargo.toml`.
+
+  - [ ] **6.3** `monitor/gpu.rs`: instance-name parser and per-PID aggregation.
+    - Acceptance: parses PID, LUID, engine index and engine type, including an empty
+      `engtype_` token; aggregation follows the plan's GPU decision.
+    - Verify: unit tests over captured real instance names from this machine.
+    - Files: `src-tauri/src/monitor/gpu.rs`.
+
+  - [ ] **6.4** `monitor/types.rs` + `monitor/scheduler.rs`: tick loop and system totals.
+    - Acceptance: a background tick produces `ProcessMetrics` + `SystemSummary` on the
+      configured interval; GPU may tick slower than CPU/disk; the scheduler owns the
+      sampler and the signature cache; stopping the loop leaves no thread behind.
+    - Verify: `cargo test`; run for 60 s and report the app's own CPU.
+    - Files: `src-tauri/src/monitor/types.rs`, `src-tauri/src/monitor/scheduler.rs`.
+
+  - [ ] **6.5** Overhead harness and documentation.
+    - Acceptance: `cargo run --example metrics` prints per-tick timing and self CPU; the
+      `AGENTS.md` GPU aggregation note matches what the code does.
+    - Verify: 10-minute run recorded in the commit message; `npm run verify`.
+    - Files: `src-tauri/examples/metrics.rs`, `AGENTS.md`.
 
 - [ ] **Task 7: Process table UI**
   - Acceptance: Sort/filter by CPU/RAM/disk/GPU; sparklines; keyboard accessible; empty/error/loading states.

@@ -41,8 +41,8 @@ The desktop app is a Tauri 2 shell with a React/TypeScript UI. A separate Rust n
 
 ### Phase 1 — Windows Performance Guard
 
-- [ ] Task 5: Process snapshot with `sysinfo`, publisher/signature/path, critical-process denylist.
-- [ ] Task 6: PDH sampling for CPU, GPU, disk; system summary; sampling scheduler.
+- [x] Task 5: Process snapshot with `sysinfo`, publisher/signature/path, critical-process denylist.
+- [ ] Task 6: PDH sampling for GPU, CPU and disk rates from `sysinfo`; system summary; sampling scheduler. Design in "Task 6 design" below.
 - [ ] Task 7: Tauri commands + process table UI with sorting, filtering, sparklines.
 - [ ] Task 8: Process risk scoring, "safe candidate" explanations, user feedback.
 - [ ] Task 9: Graceful close action, confirmation dialog, audit event.
@@ -101,6 +101,75 @@ The desktop app is a Tauri 2 shell with a React/TypeScript UI. A separate Rust n
 - [ ] Update from previous version verifies signatures.
 - [ ] Uninstall removes the native-host registry key and local data.
 - [ ] Release checklist complete.
+
+## Task 6 design: per-process telemetry
+
+Status: proposed, waiting for approval. Sub-tasks are in `tasks/todo.md`.
+
+### Measured facts (this machine, 2026-11-01)
+
+- Windows 11 build 26300, 8 logical processors, ~290 processes.
+- `\Process(*)\% Processor Time`, `\Process(*)\IO Read Bytes/sec` and
+  `\Process(*)\IO Write Bytes/sec` exist; 273 `Process` instances enumerate in 26 ms.
+- `\GPU Engine(*)\Utilization Percentage` exists with **336** instances. Names look like
+  `\\HOST\GPU Engine(pid_1076_luid_0x00000000_0x0000cd43_phys_0_eng_1_engtype_videodecode)\utilization percentage`
+  and the `engtype_` token is sometimes empty (`eng_10_engtype_` on this box).
+- A PowerShell wildcard sample of both objects costs 1.8–2.9 s per call, but that
+  recreates the counter set every call. A reused PDH query is the documented
+  low-cost path and its real cost is the first thing sub-task 6.2 measures.
+- `sysinfo` 0.40 `refresh_processes()` already requests memory, **cpu** and
+  **disk_usage** on every call (`sysinfo-0.40.1/src/common/system.rs:316-331`), so CPU %
+  and disk rates are already being collected by the Task 5 sampler and only need
+  exposing. Its Windows backend uses `GetProcessTimes` + `GetSystemTimes` deltas and
+  `GetProcessIoCounters` (`sysinfo-0.40.1/src/windows/process.rs:48-49`).
+- `windows` 0.62 exposes the PDH functions we need under the
+  `Win32_System_Performance` feature; `PDH_COUNTER_PATH_ELEMENTS_W` is the struct name
+  (there is no `_T` alias) and `PdhSetCounterTimeScale` is **not** in the bindings.
+
+### Decisions
+
+- **D1 — PDH is only for GPU.** CPU % and disk B/s come from `sysinfo`, which already
+  computes the two-sample delta, normalises by core count, and is what Microsoft
+  recommends for CPU time. Adding a PDH CPU counter would create a second, disagreeing
+  source for the same number.
+- **D2 — every metric is `Option<T>`, and `None` means "not sampled".** A zero from a
+  counter that has no sample yet is indistinguishable from an idle process, and the risk
+  score in Task 8 must not treat the two alike.
+- **D3 — one reused query per object, wildcard counter, single collect per tick.**
+  Counter handles are never rebuilt per tick; that is both the documented pattern and
+  the difference between ~2 ms and ~2 s.
+- **D4 — GPU runs on its own slower cadence** (default 2 s vs 1 s for the process
+  snapshot) because 336 engine instances is the expensive part, not the PID count.
+- **D5 — availability is probed once, then reported.** If `\GPU Engine` is absent
+  (no WDDM/driver support), the sampler records the reason and stops trying until the
+  next long retry, instead of failing on every tick.
+
+### Open decisions for the user
+
+- **GPU aggregation: sum or max per PID.** `AGENTS.md` currently records "max engine
+  utilization per PID, not a sum". Task Manager **sums** all engines of a process
+  (normalised by the sample interval); Process Hacker uses **max**, which is why the two
+  disagree. Recommendation: sum, keep the per-engine breakdown for the tooltip, and
+  correct the `AGENTS.md` gotcha in the same commit.
+
+### Sub-tasks
+
+1. **6.1 Expose what `sysinfo` already samples.** `cpu_percent`,
+   `disk_read_bytes_per_sec`, `disk_write_bytes_per_sec` on `ProcessSnapshot`; first tick
+   reports `None`. One file plus tests.
+2. **6.2 `monitor/pdh.rs`.** Safe wrapper: open query, add English counters, collect,
+   read the formatted array, close; `Drop`; error → status mapping; the availability
+   ladder using `PdhEnumObjectItemsW`. Includes the cost measurement for D3/D4.
+3. **6.3 `monitor/gpu.rs`.** Pure instance-name parser (PID, LUID, physical GPU, engine
+   index, engine type including empty/unknown) with unit tests, then per-PID aggregation
+   per the decision above.
+4. **6.4 `monitor/types.rs` + `monitor/scheduler.rs`.** `ProcessMetrics`, `SystemSummary`,
+   the tick loop, the shared latest snapshot, and the system totals; the scheduler owns
+   `ProcessSampler` and `SignatureCache`, which ends the `pub(crate)` cache ownership
+   question left over from Task 5.
+5. **6.5 Overhead harness + docs.** An example that prints per-tick wall time and the
+   app's own CPU so Task 11 can assert the <1% / <80 MB budget; correct the `AGENTS.md`
+   GPU gotcha.
 
 ## Risks and mitigations
 
