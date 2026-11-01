@@ -377,6 +377,29 @@ no charting dependency.
    `npm test` script, and table tests for sorting, the `None` em dash, keyboard access and
    row identity; `npm run verify` gains the `npm test` step so the gate covers the UI.
 
+### What 7.2 measured (2026-11-02, running app over WebView2 CDP)
+
+- **The stream is not a metronome, and now that is visible from the consumer side.** The
+  page counted 47 distinct ticks in 60 s — 1.25–1.6 s apart in a debug build — where the
+  release record's mean tick is 372 ms with one that took 4.07 s. Note the two figures do
+  not measure the same thing: the harness calls `tick()` and never emits, while the app's
+  sink serializes and pushes the whole ~106 KB tick on that same thread. **The release cost
+  with emit is unmeasured** and is the number Task 11's budget work has to start from. What
+  both figures say the same way is that a UI consumer may not assume 1 Hz: the sparkline's
+  x-axis is 60 *samples*, not 60 seconds, and nothing in the UI may compute an age from
+  wall clock — the tick carries no timestamp at all.
+- **The pull answers the first frame.** `latest_tick()` returned a whole tick 113 ms after
+  the page mounted, so the table paints with data instead of waiting up to a tick-and-a-half
+  for the first push. `tick: null` is still a real answer — it is what a cold first tick
+  (8–11 s) looks like from the front end.
+- **The payload crosses intact.** Every event carried its 303–311 rows whole, so T7's
+  "send the tick as it is" holds at this row count without the trim being needed yet; the
+  candidate for trimming (per-row `exePath`/`publisher` for rows the user cannot see) stays
+  deferred until 7.3 has a real row count on screen.
+- **The loop handle needs a lock to be managed.** `RunningScheduler` holds the control
+  channel's `Sender`, which is `Send` but not `Sync`, so `Metrics` keeps the loop behind a
+  `Mutex` and drops it to stop the loop at exit.
+
 ## Risks and mitigations
 
 | Risk | Impact | Mitigation |

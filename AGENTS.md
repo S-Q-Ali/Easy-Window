@@ -19,14 +19,17 @@ Stack: **Tauri 2 + Rust + React 19/TypeScript/Vite**; Chrome MV3 extension; SQLi
 ## Current status
 
 Phase 0 is complete: Tauri 2 shell, React UI, design tokens, SQLite store,
-audit log, and `npm run verify`. Phase 1 is in progress: Task 5 delivers the
+audit log, and `npm run verify`. Phase 1 is in progress: Task 5 delivered the
 read-only process snapshot (`src-tauri/src/monitor/process.rs`) and the
 critical-process denylist (`src-tauri/src/risk/denylist.rs`); Task 6 is
 complete — the PDH wrapper, the GPU engine parser and sampler, the tick shapes
 in `monitor/types.rs`, and `monitor/scheduler.rs`, which ticks both clocks and
 publishes each snapshot, plus `cargo run --release --example metrics`, the
-overhead harness that measures what that loop costs. None of it is wired to the
-UI yet. Next is Task 7 (process table).
+overhead harness that measures what that loop costs. Task 7 is under way: the
+loop now runs inside the app (`commands/processes.rs`), `latest_tick()` answers
+the first frame and every tick is emitted on `metrics://tick` — but nothing on
+screen reads them yet, so the Processes page is still its empty state. Next is
+7.3, the process table.
 
 ## Commands
 
@@ -86,7 +89,7 @@ tests/e2e/            Playwright extension tests
 - Without elevation, `ProcessIdToSessionId` and `QueryFullProcessImageNameW` both fail for Windows-protected processes, so session and path are missing for exactly the processes that must never be closed. The share measured here varies with what is running: ~75 of 280 in the Task 5 capture, 131 of 274 on average over the 600-second Task 6 one — plan on nearly half the table having no CPU or disk figure. `CriticalReason::IdentityUnavailable` blocks them; a missing path is never harmless.
 - Signature checks dominate a snapshot: ~8 s cold, ~0.5 s warm with one shared `SignatureCache`. Extra worker threads do not help; Windows serialises `WinVerifyTrust` and catalog calls.
 - Expired-but-genuine signatures exist here (Git's `bash.exe` verifies `CERT_E_EXPIRED`). Carry the reason, do not report a bare `invalid`.
-- The app must stay lightweight: pause sampling when hidden, use EcoQoS for itself, keep idle CPU <1% and RAM <80 MB. Measured over 600 s in release (`--example metrics`): mean 0.96% CPU and 19 MB peak RAM, but 230 of 599 ticks land at or over 1% and the worst reads 5.8% — the budget holds on average and not per tick, which is exactly what the pause/EcoQoS work has to fix. Mean tick wall time is 372 ms of a 1 s interval, and one tick overran it by four times, so nothing downstream may assume a steady 1 Hz.
+- The app must stay lightweight: pause sampling when hidden, use EcoQoS for itself, keep idle CPU <1% and RAM <80 MB. Measured over 600 s in release (`--example metrics`): mean 0.96% CPU and 19 MB peak RAM, but 230 of 599 ticks land at or over 1% and the worst reads 5.8% — the budget holds on average and not per tick, which is exactly what the pause/EcoQoS work has to fix. Mean tick wall time is 372 ms of a 1 s interval, and one tick overran it by four times, so nothing downstream may assume a steady 1 Hz. Note what that figure covers: the harness calls `scheduler.tick()` and never emits, so it excludes serializing and pushing the ~106 KB tick, which since 7.2 happens on the same thread. The release cost with emit is not measured; the debug build's webview observed 47 ticks in 60 s — 1.25–1.6 s apart — which is the number a UI consumer should design around.
 - Extension build uses **WXT** (MIT). CRXJS has no SPDX license — do not add it.
 - `nickshui/Win-Top` has **no LICENSE file**: ideas only, never copy code or assets.
 - `Moustachauve/cookie-editor` is GPL-3.0 and `sienori/Tab-Session-Manager` is MPL-2.0: do not copy code into this MIT project.

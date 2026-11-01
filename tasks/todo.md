@@ -161,10 +161,49 @@ Spec: `docs/SPEC.md`
       1 % budget and a 3.289 % peak, 20 MB peak RAM. 105 tests pass.
     - Files: `src-tauri/src/monitor/types.rs`, `src-tauri/examples/metrics.rs`,
       `tasks/plan.md`.
-  - [ ] **7.2** Wire the loop to the window: `commands.rs` becomes `commands/mod.rs` plus
-    `commands/processes.rs` with `latest_tick()`; `setup()` spawns the scheduler into
-    managed state and each tick emits `metrics://tick`. Prove the emit reaches the webview
-    from the sampling thread.
+  - [x] **7.2** Wire the loop to the window.
+    - Done: `commands.rs` became `commands/mod.rs` plus `commands/processes.rs`, and the
+      move is its own commit (`7391211`) so the wiring stays reviewable. `Scheduler::spawn`
+      now takes a sink and hands it every tick it publishes before waiting for the next
+      interval — the app emits from inside the loop rather than polling the shared slot, so
+      no tick can be missed between polls. `Metrics::start(app.handle())` owns the loop in
+      managed state and a loop that cannot start becomes
+      `{"state":"failed","reason":"…"}` instead of aborting the app: the other pages still
+      open and the table is told why it has no numbers. Dropping that state drops the
+      control channel's sender, which is how the loop stops at exit. The state holds the
+      loop in a `Mutex` because `RunningScheduler` is `Send` but not `Sync` (an
+      `mpsc::Sender` is not `Sync`), so it cannot be managed bare. `latest_tick()` answers
+      the first frame with the newest published tick, and `SamplingState` serializes with
+      the same convention as the rows: `state` tag, camelCase fields, `tick: null` meaning
+      "alive, nothing measured yet" — not an error. `lib.rs` registers the commands in two
+      `#[cfg]`-gated `generate_handler!` chains because that macro cannot hold a cfg'd
+      entry, so the sampling command exists only where the sampler does.
+    - Measured: proven in the running app, with `latest_tick` and a `metrics://tick`
+      listener mounted temporarily on the Processes page and read over WebView2's CDP port
+      (the patch was reverted; nothing of it is committed). The pull answered
+      `state=running, tick=present` **113 ms** after mount, so the table can be populated
+      on first paint instead of one tick later. Pushes arrived **whole** — 303–311 rows in
+      every payload, no truncation of the 106 KB figure — and the page saw **47 distinct
+      ticks in 60 s**, i.e. **1.25–1.6 s apart** in a debug build. That is the Task 6.5
+      overrun showing up at the consumer: the UI must treat the stream as "as fast as the
+      loop manages", never as a metronome. 110 Rust tests pass, clippy clean.
+    - Review found two things worth carrying, both recorded here rather than deferred: the
+      372 ms release figure does **not** cover this path (the harness never emits, and the
+      app now serializes and pushes ~106 KB on the tick thread — the release cost with emit
+      is unmeasured, and that is the number Task 11's budget work must start from), and a
+      pushed tick's `selectable` flag is a display figure from up to a second ago, so Task 9
+      must re-resolve identity and re-run the denylist at action time. That is now written
+      into Task 9's acceptance and into the `SamplingState::Running` doc.
+    - One already-committed Task 6 test broke under this change rather than because of it:
+      `a_gpu_report_is_stamped_with_the_tick_that_read_it_and_carried_after` asserted that
+      the tick after a GPU read still carried that read's stamp, which only holds while a
+      tick is shorter than the 1.4 s GPU interval. Two more live loops in the suite made the
+      preceding tick run longer than that, so the next tick legally read the counter again
+      and the stamp moved. It now accepts the reading tick's stamp or its own and still
+      rejects a stamp no recent tick produced: the wall-clock assumption was the bug, and the
+      repo already records that a tick can overrun its interval four times.
+    - Files: `src-tauri/src/commands/processes.rs`, `src-tauri/src/commands/mod.rs`,
+      `src-tauri/src/monitor/scheduler.rs`, `src-tauri/src/lib.rs`.
   - [ ] **7.3** `ProcessTable`: sortable headers on CPU/RAM/disk/GPU/name, name+PID filter,
     em dash for `None` sorting last, the stale-GPU marker from `gpuSequence`, and
     empty/loading/error states. Real buttons with `aria-sort`.
@@ -183,6 +222,10 @@ Spec: `docs/SPEC.md`
 
 - [ ] **Task 9: Graceful close + audit**
   - Acceptance: WM_CLOSE first; wait; report result; force close only after confirmation; critical blocked; audit event.
+  - Acceptance (from 7.2): the close path re-resolves PID + creation time + path + signature and re-runs
+    `denylist::assess` at action time. A tick is a display figure and can be a second old — in that
+    time a PID can exit and be recycled — so the `selectable` flag in a pushed tick is never
+    sufficient authority to act.
   - Verify: Close a test app; verify exit and audit; attempt critical close.
   - Files: `src-tauri/src/actions/close.rs`, `src-tauri/src/commands/actions.rs`, `src/components/ConfirmDialog/*`.
 

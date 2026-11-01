@@ -40,6 +40,11 @@ This project has no released build yet. Everything below is what has landed on
 - Overhead harness (`cargo run --release --manifest-path src-tauri/Cargo.toml --example metrics`)
   that reports per-tick wall time, the sampler's own CPU and peak RAM, and the
   process-row counts, so the idle budget can be checked rather than assumed.
+- The tick loop now runs inside the app: every published tick is sent to the
+  window on `metrics://tick`, and `latest_tick()` hands the front end the newest
+  one so a table can be filled on the first frame instead of one tick later. A
+  loop that cannot start is reported to the page as a reason, not treated as a
+  fatal error — the rest of the app still opens.
 - `npm run verify` as the single local gate: typecheck, production build,
   `cargo fmt`, clippy with `-D warnings`, and `cargo test`.
 - CI on every push and pull request: UI job on Linux, Rust job on Windows, with
