@@ -54,6 +54,9 @@ fn main() {
         if let Some(title) = &process.window_title {
             println!("{:>60}window: {}", "", truncate(title, 90));
         }
+        if let Some(reason) = &process.signature_reason {
+            println!("{:>60}reason: {}", "", reason);
+        }
     }
 
     println!("\n{} processes", snapshot.len());

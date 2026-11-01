@@ -85,6 +85,11 @@ pub struct ProcessSnapshot {
     pub exe_path: Option<String>,
     pub publisher: Option<String>,
     pub signature: SignatureStatus,
+    /// Why the signature is `invalid` or `unknown`: a Windows error name such
+    /// as `CERT_E_EXPIRED`, a raw code such as `0x80096004`, or one of the
+    /// local codes spelled here. An expired certificate on a genuine binary is
+    /// a boring problem, and the UI must be able to say so.
+    pub signature_reason: Option<String>,
     pub session_id: Option<u32>,
     pub window_title: Option<String>,
     /// Seconds since the Unix epoch. Together with the PID this distinguishes a
@@ -100,27 +105,36 @@ pub struct ProcessSnapshot {
 struct SignatureInfo {
     status: SignatureStatus,
     publisher: Option<String>,
+    reason: Option<String>,
 }
 
 impl SignatureInfo {
-    fn new(status: SignatureStatus, publisher: Option<String>) -> Self {
-        Self { status, publisher }
+    fn new(status: SignatureStatus, publisher: Option<String>, reason: Option<String>) -> Self {
+        Self {
+            status,
+            publisher,
+            reason,
+        }
     }
 
     fn unknown() -> Self {
-        Self::new(SignatureStatus::Unknown, None)
+        Self::new(SignatureStatus::Unknown, None, None)
     }
 
     fn unsigned() -> Self {
-        Self::new(SignatureStatus::Unsigned, None)
+        Self::new(SignatureStatus::Unsigned, None, None)
     }
 
-    fn invalid() -> Self {
-        Self::new(SignatureStatus::Invalid, None)
+    fn invalid(reason: String) -> Self {
+        Self::new(SignatureStatus::Invalid, None, Some(reason))
+    }
+
+    fn unverified(reason: String) -> Self {
+        Self::new(SignatureStatus::Unknown, None, Some(reason))
     }
 
     fn trusted(publisher: Option<String>) -> Self {
-        Self::new(SignatureStatus::Trusted, publisher)
+        Self::new(SignatureStatus::Trusted, publisher, None)
     }
 }
 
@@ -188,6 +202,7 @@ impl ProcessSampler {
                         .map(|path| path.to_string_lossy().into_owned()),
                     publisher: signature.publisher,
                     signature: signature.status,
+                    signature_reason: signature.reason,
                     session_id: process.session_id,
                     window_title: window_titles.get(&process.pid).cloned(),
                     start_time: process.start_time,
@@ -240,22 +255,24 @@ fn verify_signature(path: &Path) -> SignatureInfo {
         TrustOutcome::NoSignature => match find_catalog(path) {
             CatalogLookup::Found(catalog_path) => match verify_embedded_signature(&catalog_path) {
                 TrustOutcome::Trusted(publisher) => SignatureInfo::trusted(publisher),
-                TrustOutcome::NoSignature | TrustOutcome::Invalid => SignatureInfo::invalid(),
-                TrustOutcome::Unavailable => SignatureInfo::unknown(),
+                TrustOutcome::NoSignature => SignatureInfo::invalid("CATALOG_UNSIGNED".to_string()),
+                TrustOutcome::Invalid(reason) => SignatureInfo::invalid(reason),
+                TrustOutcome::Unavailable(reason) => SignatureInfo::unverified(reason),
             },
             CatalogLookup::NotFound => SignatureInfo::unsigned(),
             CatalogLookup::Unavailable => SignatureInfo::unknown(),
         },
-        TrustOutcome::Invalid => SignatureInfo::invalid(),
-        TrustOutcome::Unavailable => SignatureInfo::unknown(),
+        TrustOutcome::Invalid(reason) => SignatureInfo::invalid(reason),
+        TrustOutcome::Unavailable(reason) => SignatureInfo::unverified(reason),
     }
 }
 
+#[derive(Debug)]
 enum TrustOutcome {
     Trusted(Option<String>),
     NoSignature,
-    Invalid,
-    Unavailable,
+    Invalid(String),
+    Unavailable(String),
 }
 
 fn verify_embedded_signature(path: &Path) -> TrustOutcome {
@@ -309,6 +326,18 @@ fn verify_embedded_signature(path: &Path) -> TrustOutcome {
     classify_trust_result(result, publisher)
 }
 
+/// Trust failures we can name. Anything else keeps its raw code, because an
+/// unrecognised code is a reason to report `unknown`, not to guess.
+const TRUST_FAILURES: &[(&str, i32)] = &[
+    ("TRUST_E_BAD_DIGEST", TRUST_E_BAD_DIGEST.0),
+    ("TRUST_E_EXPLICIT_DISTRUST", TRUST_E_EXPLICIT_DISTRUST.0),
+    ("TRUST_E_SUBJECT_NOT_TRUSTED", TRUST_E_SUBJECT_NOT_TRUSTED.0),
+    ("CERT_E_UNTRUSTEDROOT", CERT_E_UNTRUSTEDROOT.0),
+    ("CERT_E_EXPIRED", CERT_E_EXPIRED.0),
+    ("CERT_E_REVOKED", CERT_E_REVOKED.0),
+    ("CERT_E_CHAINING", CERT_E_CHAINING.0),
+];
+
 fn classify_trust_result(result: i32, publisher: Option<String>) -> TrustOutcome {
     if result == 0 {
         return TrustOutcome::Trusted(publisher);
@@ -318,19 +347,9 @@ fn classify_trust_result(result: i32, publisher: Option<String>) -> TrustOutcome
         return TrustOutcome::NoSignature;
     }
 
-    let known_failure = [
-        TRUST_E_BAD_DIGEST.0,
-        TRUST_E_EXPLICIT_DISTRUST.0,
-        TRUST_E_SUBJECT_NOT_TRUSTED.0,
-        CERT_E_UNTRUSTEDROOT.0,
-        CERT_E_EXPIRED.0,
-        CERT_E_REVOKED.0,
-        CERT_E_CHAINING.0,
-    ];
-    if known_failure.contains(&result) {
-        TrustOutcome::Invalid
-    } else {
-        TrustOutcome::Unavailable
+    match TRUST_FAILURES.iter().find(|(_, code)| *code == result) {
+        Some((name, _)) => TrustOutcome::Invalid((*name).to_string()),
+        None => TrustOutcome::Unavailable(format!("0x{:08X}", result as u32)),
     }
 }
 
@@ -782,6 +801,26 @@ mod tests {
         let info = verify_signature(&path);
         assert_eq!(info.status, SignatureStatus::Trusted, "{}", path.display());
         assert!(info.publisher.is_some());
+    }
+
+    #[test]
+    fn an_expired_certificate_keeps_the_windows_reason() {
+        let outcome = classify_trust_result(CERT_E_EXPIRED.0, None);
+
+        assert!(
+            matches!(&outcome, TrustOutcome::Invalid(reason) if reason == "CERT_E_EXPIRED"),
+            "{outcome:?}"
+        );
+    }
+
+    #[test]
+    fn an_unlisted_failure_code_is_kept_as_hex() {
+        let outcome = classify_trust_result(-1, None);
+
+        assert!(
+            matches!(&outcome, TrustOutcome::Unavailable(reason) if reason == "0xFFFFFFFF"),
+            "{outcome:?}"
+        );
     }
 
     #[test]
