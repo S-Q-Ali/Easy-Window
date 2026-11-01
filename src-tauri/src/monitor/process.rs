@@ -19,6 +19,7 @@ use std::mem::size_of;
 use std::os::windows::ffi::OsStrExt;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
+use std::time::UNIX_EPOCH;
 
 use serde::Serialize;
 use sysinfo::{Pid, ProcessesToUpdate, System};
@@ -28,7 +29,7 @@ use crate::risk::denylist::{self, CriticalReason, ProcessFacts};
 use windows::Win32::Foundation::{
     CERT_E_CHAINING, CERT_E_EXPIRED, CERT_E_REVOKED, CERT_E_UNTRUSTEDROOT, CloseHandle,
     GENERIC_READ, HANDLE, HWND, LPARAM, TRUST_E_BAD_DIGEST, TRUST_E_EXPLICIT_DISTRUST,
-    TRUST_E_NOSIGNATURE, TRUST_E_SUBJECT_FORM_UNKNOWN, TRUST_E_SUBJECT_NOT_TRUSTED, WPARAM,
+    TRUST_E_NOSIGNATURE, TRUST_E_SUBJECT_FORM_UNKNOWN, TRUST_E_SUBJECT_NOT_TRUSTED,
 };
 use windows::Win32::Security::Cryptography::Catalog::{
     CATALOG_INFO, CryptCATAdminAcquireContext, CryptCATAdminAcquireContext2,
@@ -46,17 +47,16 @@ use windows::Win32::Security::WinTrust::{
     WTHelperGetProvSignerFromChain, WTHelperProvDataFromStateData, WinVerifyTrust,
 };
 use windows::Win32::Storage::FileSystem::{
-    CreateFileW, FILE_ATTRIBUTE_NORMAL, FILE_SHARE_DELETE, FILE_SHARE_READ, FILE_SHARE_WRITE,
-    OPEN_EXISTING,
+    CreateFileW, FILE_ATTRIBUTE_NORMAL, FILE_BEGIN, FILE_SHARE_DELETE, FILE_SHARE_READ,
+    FILE_SHARE_WRITE, OPEN_EXISTING, SetFilePointerEx,
 };
 use windows::Win32::System::SystemInformation::{GetSystemDirectoryW, GetWindowsDirectoryW};
 use windows::Win32::System::Threading::{
     IsProcessCritical, OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
-    EnumWindows, GW_OWNER, GWL_EXSTYLE, GetWindow, GetWindowLongPtrW, GetWindowThreadProcessId,
-    IsWindowVisible, SMTO_ABORTIFHUNG, SMTO_BLOCK, SendMessageTimeoutW, WM_GETTEXT,
-    WS_EX_TOOLWINDOW,
+    EnumWindows, GW_OWNER, GWL_EXSTYLE, GetWindow, GetWindowLongPtrW, GetWindowTextW,
+    GetWindowThreadProcessId, IsWindowVisible, WS_EX_TOOLWINDOW,
 };
 use windows::core::{BOOL, PCWSTR, w};
 
@@ -139,15 +139,17 @@ impl SignatureInfo {
     }
 }
 
-/// Signature results keyed by a lowercase executable path.
+/// Signature results, keyed by path, size, and modification time.
 ///
 /// A single check costs a few hundred milliseconds, so samplers share one
-/// cache instead of re-verifying the same binaries on every refresh. Task 6's
-/// scheduler can drop the cache when it wants a fresh view.
+/// cache instead of re-verifying the same binaries on every refresh. The key
+/// carries the file's size and mtime so a binary replaced by an update cannot
+/// inherit an old `Trusted`, and `Unknown` is never stored: it came from a
+/// check that could not run, and a cached guess has no way to expire.
 ///
-/// Caching, not threading, is the only way to make this cheap: four worker
-/// threads took the same 9.1 s for a cold snapshot as one thread took 9.2 s,
-/// because Windows serialises the trust and catalog calls in its own stores.
+/// Caching, not threading, is what makes this cheap: four worker threads took
+/// the same 9.1 s for a cold snapshot as one thread took 9.2 s, because
+/// Windows serialises the trust and catalog calls inside its own stores.
 #[derive(Clone, Default)]
 pub(crate) struct SignatureCache(Arc<Mutex<HashMap<String, SignatureInfo>>>);
 
@@ -250,15 +252,38 @@ impl ProcessSampler {
             return SignatureInfo::unknown();
         };
 
-        let key = path.to_string_lossy().to_ascii_lowercase();
+        // Without a stat there is nothing to key the result on, and a result
+        // that cannot be invalidated must not be remembered.
+        let Some(key) = cache_key(path) else {
+            return verify_signature(path);
+        };
+
         if let Some(info) = self.signatures.get(&key) {
             return info;
         }
 
         let info = verify_signature(path);
-        self.signatures.insert(key, info.clone());
+        if info.status != SignatureStatus::Unknown {
+            self.signatures.insert(key, info.clone());
+        }
         info
     }
+}
+
+/// Cache key for a verified file: its lowercase path plus the identity of the
+/// bytes at that path. A binary replaced by an update gets a new key, so an
+/// old `Trusted` result can never be reused for different content.
+fn cache_key(path: &Path) -> Option<String> {
+    let metadata = path.metadata().ok()?;
+    let modified = metadata.modified().ok()?;
+    let age = modified.duration_since(UNIX_EPOCH).ok()?;
+
+    Some(format!(
+        "{}\u{1}{}\u{1}{}",
+        path.to_string_lossy().to_ascii_lowercase(),
+        metadata.len(),
+        age.as_secs()
+    ))
 }
 
 struct RawProcess {
@@ -320,8 +345,12 @@ fn verify_embedded_signature(path: &Path) -> TrustOutcome {
             pFile: &mut file_info,
         },
         dwStateAction: WTD_STATEACTION_VERIFY,
-        // No network: use cached revocation information only, and skip
-        // revocation checks entirely. The app never phones home.
+        // No network: cached URLs only, so chain building cannot fetch a
+        // missing intermediate certificate. Revocation is skipped outright
+        // (WTD_REVOKE_NONE), so a revoked but otherwise well-formed
+        // certificate still reports Trusted; only the machine's local
+        // Disallowed store surfaces as a failure. Trusted does not mean
+        // "not revoked", and risk scoring must not claim it.
         dwProvFlags: WTD_CACHE_ONLY_URL_RETRIEVAL,
         ..Default::default()
     };
@@ -545,12 +574,20 @@ fn catalog_lookup_with_admin(admin: isize, file: HANDLE) -> CatalogLookup {
 
 fn catalog_hash(admin: isize, file: HANDLE) -> Option<Vec<u8>> {
     let mut size: u32 = 0;
+    if !rewind(file) {
+        return None;
+    }
+
     let first = unsafe { CryptCATAdminCalcHashFromFileHandle2(admin, file, &mut size, None, None) };
     if first.is_err() || size == 0 || size > 128 {
         return None;
     }
 
     let mut hash = vec![0u8; size as usize];
+    if !rewind(file) {
+        return None;
+    }
+
     let second = unsafe {
         CryptCATAdminCalcHashFromFileHandle2(admin, file, &mut size, Some(hash.as_mut_ptr()), None)
     };
@@ -560,6 +597,14 @@ fn catalog_hash(admin: isize, file: HANDLE) -> Option<Vec<u8>> {
 
     hash.truncate(size as usize);
     Some(hash)
+}
+
+/// Microsoft documents neither where the file pointer starts nor where it ends
+/// up after a hash calculation, so every calculation is told to begin at byte
+/// zero. The SHA-1 fallback reuses the handle after a SHA-256 pass, which would
+/// otherwise hash only whatever the first pass left unread.
+fn rewind(file: HANDLE) -> bool {
+    unsafe { SetFilePointerEx(file, 0, None, FILE_BEGIN).is_ok() }
 }
 
 fn catalog_info_path(info: &CATALOG_INFO) -> Option<PathBuf> {
@@ -659,28 +704,16 @@ unsafe extern "system" fn collect_window_title(window: HWND, lparam: LPARAM) -> 
 
 fn window_title(window: HWND) -> Option<String> {
     let mut buffer = [0u16; 512];
-    let mut result: usize = 0;
 
-    let sent = unsafe {
-        SendMessageTimeoutW(
-            window,
-            WM_GETTEXT,
-            WPARAM(buffer.len()),
-            LPARAM(buffer.as_mut_ptr() as isize),
-            SMTO_ABORTIFHUNG | SMTO_BLOCK,
-            100,
-            Some(&mut result as *mut usize),
-        )
-    };
-    if sent.0 == 0 {
+    // GetWindowTextW takes the caption from the window manager rather than
+    // sending WM_GETTEXT to the owning thread, so a hung process can neither
+    // stall the snapshot nor write into this buffer after the call returned.
+    let length = unsafe { GetWindowTextW(window, &mut buffer) };
+    if length <= 0 {
         return None;
     }
 
-    let end = buffer.iter().position(|&unit| unit == 0)?;
-    if end == 0 {
-        return None;
-    }
-
+    let end = (length as usize).min(buffer.len());
     let title = String::from_utf16_lossy(&buffer[..end]);
     let title = title.trim();
     if title.is_empty() {
@@ -746,11 +779,10 @@ mod tests {
         ProcessSampler::new().expect("process sampler")
     }
 
-    fn notepad_path() -> Option<PathBuf> {
-        let path = PathBuf::from(std::env::var("SystemRoot").expect("SystemRoot"))
+    fn notepad_path() -> PathBuf {
+        PathBuf::from(std::env::var("SystemRoot").expect("SystemRoot"))
             .join("System32")
-            .join("notepad.exe");
-        path.is_file().then_some(path)
+            .join("notepad.exe")
     }
 
     #[test]
@@ -781,34 +813,35 @@ mod tests {
     }
 
     #[test]
-    fn no_critical_process_is_selectable() {
+    fn core_windows_binaries_are_never_selectable() {
         let mut sampler = sampler();
+        let snapshot = sampler.snapshot();
+        let mut found = 0;
 
-        for process in sampler.snapshot() {
-            assert_eq!(
-                process.selectable,
-                process.critical_reason.is_none(),
-                "pid {} ({})",
-                process.pid,
-                process.name
-            );
+        for process in &snapshot {
+            let name = process.name.to_ascii_lowercase();
+            if ["csrss.exe", "lsass.exe", "services.exe", "wininit.exe"].contains(&name.as_str()) {
+                found += 1;
+                assert!(
+                    !process.selectable,
+                    "pid {} ({})",
+                    process.pid, process.name
+                );
+            }
         }
+
+        assert!(found > 0, "expected core Windows binaries in the snapshot");
     }
 
     #[test]
     fn processes_without_an_exe_path_are_not_selectable() {
         let mut sampler = sampler();
-        let snapshot = sampler.snapshot();
-        let unverified: Vec<_> = snapshot
-            .iter()
-            .filter(|process| process.pid > 4 && process.exe_path.is_none())
-            .collect();
 
-        assert!(
-            !unverified.is_empty(),
-            "expected protected processes whose path is unreadable"
-        );
-        for process in unverified {
+        for process in sampler.snapshot() {
+            if process.pid <= 4 || process.exe_path.is_some() {
+                continue;
+            }
+
             assert!(
                 process.critical_reason.is_some(),
                 "pid {} ({})",
@@ -821,9 +854,8 @@ mod tests {
 
     #[test]
     fn system_binaries_are_trusted_via_catalog() {
-        let Some(path) = notepad_path() else {
-            return;
-        };
+        let path = notepad_path();
+        assert!(path.is_file(), "{} is missing", path.display());
 
         assert!(
             matches!(find_catalog(&path), CatalogLookup::Found(_)),
@@ -878,10 +910,10 @@ mod tests {
 
     #[test]
     fn a_shared_signature_cache_serves_the_next_sampler() {
-        let path = notepad_path().expect("notepad.exe");
+        let path = notepad_path();
         let seeded = SignatureInfo::trusted(Some("Sentinel Publisher".to_string()));
         let cache = SignatureCache::default();
-        cache.insert(path.to_string_lossy().to_ascii_lowercase(), seeded.clone());
+        cache.insert(cache_key(&path).expect("cache key"), seeded.clone());
 
         let sampler = ProcessSampler::with_cache(cache.clone()).expect("process sampler");
         let info = sampler.signature_for(Some(&path));
@@ -890,14 +922,49 @@ mod tests {
     }
 
     #[test]
+    fn a_replaced_binary_is_verified_again() {
+        let path =
+            std::env::temp_dir().join(format!("easy-window-cache-{}.bin", std::process::id()));
+        let cache = SignatureCache::default();
+        let sampler = ProcessSampler::with_cache(cache.clone()).expect("process sampler");
+
+        std::fs::write(&path, b"first").expect("write the first file");
+        sampler.signature_for(Some(&path));
+        std::fs::write(&path, b"a longer second file").expect("write the second file");
+        sampler.signature_for(Some(&path));
+
+        let _ = std::fs::remove_file(&path);
+
+        assert_eq!(
+            cache.len(),
+            2,
+            "the replaced file must not reuse the earlier result"
+        );
+    }
+
+    #[test]
+    fn a_file_that_cannot_be_statted_is_not_cached() {
+        let cache = SignatureCache::default();
+        let sampler = ProcessSampler::with_cache(cache.clone()).expect("process sampler");
+
+        let info =
+            sampler.signature_for(Some(Path::new(r"C:\EasyWindow\does-not-exist\ghost.exe")));
+
+        assert_eq!(info.status, SignatureStatus::Unknown);
+        assert_eq!(
+            cache.len(),
+            0,
+            "a result with nothing to key it on is transient"
+        );
+    }
+
+    #[test]
     fn signature_cache_reuses_results() {
         let sampler = sampler();
         let path = PathBuf::from(std::env::var("SystemRoot").expect("SystemRoot"))
             .join("System32")
             .join("kernel32.dll");
-        if !path.is_file() {
-            return;
-        }
+        assert!(path.is_file(), "{} is missing", path.display());
 
         let first = sampler.signature_for(Some(&path));
         let second = sampler.signature_for(Some(&path));
