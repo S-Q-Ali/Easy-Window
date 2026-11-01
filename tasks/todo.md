@@ -33,7 +33,7 @@ Spec: `docs/SPEC.md`
     Windows reason behind a rejection, parent, session, window title, start
     time, and memory; critical processes are flagged with a reason and are
     unselectable, including the ones whose path Windows hides.
-  - Verify: `cargo test` (44 tests; 28 of them cover `monitor` and `risk`); compare against
+  - Verify: `cargo test` (52 tests; 36 of them cover `monitor` and `risk`); compare against
     Task Manager with `cargo run --manifest-path src-tauri/Cargo.toml --example processes`.
   - Files: `src-tauri/src/monitor/process.rs`, `src-tauri/src/risk/denylist.rs`, tests.
 
@@ -46,10 +46,14 @@ Spec: `docs/SPEC.md`
     app's own CPU; spot-check three processes against Task Manager.
   - Files: `src-tauri/src/monitor/*`, `src-tauri/Cargo.toml`, tests.
 
-  - [ ] **6.1** Expose the CPU and disk rates `sysinfo` already samples.
+  - [x] **6.1** Expose the CPU and disk rates `sysinfo` already samples.
     - Acceptance: `ProcessSnapshot` carries `cpu_percent`, `disk_read_bytes_per_sec`,
       `disk_write_bytes_per_sec`; the first tick is `None`, a later tick is a number.
     - Verify: unit test on the live snapshot; Task Manager comparison.
+    - Done: `cpu_percent` is a share of the machine (a saturated core on this
+      8-logical-core PC reads 12.5, matching Task Manager); the `processes`
+      example now samples over one second and prints CPU %, MEM, READ/s, WRITE/s.
+      Processes whose path Windows hides report `None`, not zero.
     - Files: `src-tauri/src/monitor/process.rs`.
 
   - [ ] **6.2** `monitor/pdh.rs`: reusable query wrapper and availability ladder.
