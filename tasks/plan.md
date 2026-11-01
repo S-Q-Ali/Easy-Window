@@ -150,11 +150,43 @@ Status: proposed, waiting for approval. Sub-tasks are in `tasks/todo.md`.
   that trap by taking CPU from `sysinfo` instead.
 - **Cost proxy:** `typeperf`-style sampling of `\Process(*)` ran ~3.2 s and
   `\GPU Engine(*)` ~5.2 s for two samples, but those runs are startup-dominated. The
-  in-app number, with a reused query and one collect, is what 6.2 must measure.
+  in-app number, with a reused query and one collect, is what 6.2 measures — and 6.2
+  has now measured it, below.
 - **Fallback if wildcard parsing proves fragile:** `D3DKMTQueryStatistics`
   (`windows::Wdk::Graphics::Direct3D`, feature `Wdk_Graphics_Direct3D`) attributes GPU
   time straight to a PID with no name parsing, and is what System Informer uses
   (`gpumon.c`, which also **sums** running time across nodes).
+
+### Measured by the 6.2 wrapper (same machine)
+
+`src-tauri/src/monitor/pdh.rs` with one reused query, two English counters added once,
+and five one-second ticks; run it with `cargo run --example pdh`.
+
+- **A warm tick is cheap:** collecting `\Process(*)` (~270 instances) takes 7.0–8.1 ms
+  and reading the formatted array 0.83–3.4 ms. That is ~11 ms per tick for every process
+  on the machine, against the 1.8–2.9 s a recreated PowerShell sample cost — D3's reused
+  query is what closes the gap.
+- **The first read of a fresh wildcard answers "no data yet"** (`PDH_NO_DATA` for the
+  value, `PDH_CSTATUS_INVALID_DATA` for the array) while PDH builds the instance list. A
+  sampler primes with one read and uses the value from the tick after the next collect.
+- **Windows recomputes performance data about once per second.** Two collects closer
+  than that hand back the same snapshot, which is why the tests sleep 1 500 ms and why
+  D4's 2 s GPU cadence is not a rounding choice.
+- **Per-item status is load-bearing:** 2–4 instances report `PDH_CSTATUS_INVALID_DATA`
+  every tick because processes disappear as the interval closes. A number without its
+  status would forward those gaps as measurements.
+- **`\Process(_Total)\% Processor Time` read 100.0 % on an idle-ish machine** on every
+  tick — the silent cap D1 predicted, confirmed rather than assumed. CPU stays in
+  `sysinfo`.
+- **`object_instances()` costs 0.44–0.59 s** (278–307 GPU instances) because the ladder
+  refreshes with `PdhEnumObjectsW(bRefresh = TRUE)`. It is a probe-once call, never a
+  per-tick one (D5).
+- **A missing object is a named outcome:** an unknown object name answers "the
+  performance object is not available on this machine", not a status code.
+- **Name pointers are bounded by the buffer, not by trust:** `PdhGetFormattedCounterArrayW`
+  writes the instance names into the tail of the same allocation, so a name is read only
+  up to that allocation's end. Without the bound, an unterminated name would be followed
+  for 32 768 units past it.
 
 ### Sources
 

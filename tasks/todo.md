@@ -33,7 +33,7 @@ Spec: `docs/SPEC.md`
     Windows reason behind a rejection, parent, session, window title, start
     time, and memory; critical processes are flagged with a reason and are
     unselectable, including the ones whose path Windows hides.
-  - Verify: `cargo test` (52 tests; 36 of them cover `monitor` and `risk`); compare against
+  - Verify: `cargo test` (64 tests; 48 of them cover `monitor` and `risk`); compare against
     Task Manager with `cargo run --manifest-path src-tauri/Cargo.toml --example processes`.
   - Files: `src-tauri/src/monitor/process.rs`, `src-tauri/src/risk/denylist.rs`, tests.
 
@@ -56,13 +56,22 @@ Spec: `docs/SPEC.md`
       Processes whose path Windows hides report `None`, not zero.
     - Files: `src-tauri/src/monitor/process.rs`.
 
-  - [ ] **6.2** `monitor/pdh.rs`: reusable query wrapper and availability ladder.
+  - [x] **6.2** `monitor/pdh.rs`: reusable query wrapper and availability ladder.
     - Acceptance: one query, wildcard English counters, one collect per tick; every PDH
       status becomes a named outcome, and an absent object is reported as unavailable
       rather than an error; handles close on `Drop`.
     - Verify: example prints `\Process(_Total)\% Processor Time` and the wall time of a
       warm tick for ~290 processes; `cargo test`.
-    - Files: `src-tauri/src/monitor/pdh.rs`, `src-tauri/Cargo.toml`.
+    - Done: `Query` owns an `Owned<PDH_HQUERY>` and `Counter<'q>` carries the query's
+      lifetime, so both are released when the query drops. A warm tick for ~270
+      instances measures 7–8 ms to collect and 0.8–3.4 ms to read, all named in
+      `CounterStatus`; the first read of a fresh wildcard answers "no data yet" and
+      primes the next one. `object_instances()` refreshes the object list, costs about
+      half a second, and reports a missing object as `NoSuchObject` — so it is a
+      probe-once call, never a per-tick one. `\Process(_Total)` reads a capped 100 %,
+      confirming decision D1: CPU stays in `sysinfo`.
+    - Files: `src-tauri/src/monitor/pdh.rs`, `src-tauri/src/monitor/mod.rs`,
+      `src-tauri/Cargo.toml`, `src-tauri/examples/pdh.rs`.
 
   - [ ] **6.3** `monitor/gpu.rs`: instance-name parser and per-PID aggregation.
     - Acceptance: parses PID, LUID, engine index and engine type, including an empty
