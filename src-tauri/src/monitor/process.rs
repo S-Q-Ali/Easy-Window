@@ -18,6 +18,7 @@ use std::collections::HashMap;
 use std::mem::size_of;
 use std::os::windows::ffi::OsStrExt;
 use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex};
 
 use serde::Serialize;
 use sysinfo::{Pid, ProcessesToUpdate, System};
@@ -138,22 +139,49 @@ impl SignatureInfo {
     }
 }
 
-/// Collects process snapshots and caches signature results by executable path.
+/// Signature results keyed by a lowercase executable path.
 ///
-/// Signature checks are the expensive part of a snapshot, so a path is verified
-/// once per sampler. Task 6's scheduler can drop the cache when it wants a
-/// fresh view; the identity checks themselves are cheap.
+/// A single check costs a few hundred milliseconds, so samplers share one
+/// cache instead of re-verifying the same binaries on every refresh. Task 6's
+/// scheduler can drop the cache when it wants a fresh view.
+///
+/// Caching, not threading, is the only way to make this cheap: four worker
+/// threads took the same 9.1 s for a cold snapshot as one thread took 9.2 s,
+/// because Windows serialises the trust and catalog calls in its own stores.
+#[derive(Clone, Default)]
+pub(crate) struct SignatureCache(Arc<Mutex<HashMap<String, SignatureInfo>>>);
+
+impl SignatureCache {
+    fn get(&self, key: &str) -> Option<SignatureInfo> {
+        self.0.lock().expect("signature cache").get(key).cloned()
+    }
+
+    fn insert(&self, key: String, info: SignatureInfo) {
+        self.0.lock().expect("signature cache").insert(key, info);
+    }
+
+    #[cfg(test)]
+    fn len(&self) -> usize {
+        self.0.lock().expect("signature cache").len()
+    }
+}
+
+/// Collects process snapshots and caches signature results by executable path.
 pub struct ProcessSampler {
     system: System,
-    signatures: HashMap<String, SignatureInfo>,
+    signatures: SignatureCache,
     system_dirs: Vec<PathBuf>,
 }
 
 impl ProcessSampler {
     pub fn new() -> Result<Self, sysinfo::Error> {
+        Self::with_cache(SignatureCache::default())
+    }
+
+    pub(crate) fn with_cache(signatures: SignatureCache) -> Result<Self, sysinfo::Error> {
         Ok(Self {
             system: System::new()?,
-            signatures: HashMap::new(),
+            signatures,
             system_dirs: trusted_system_dirs(),
         })
     }
@@ -217,14 +245,14 @@ impl ProcessSampler {
         snapshot
     }
 
-    fn signature_for(&mut self, path: Option<&Path>) -> SignatureInfo {
+    fn signature_for(&self, path: Option<&Path>) -> SignatureInfo {
         let Some(path) = path else {
             return SignatureInfo::unknown();
         };
 
         let key = path.to_string_lossy().to_ascii_lowercase();
         if let Some(info) = self.signatures.get(&key) {
-            return info.clone();
+            return info;
         }
 
         let info = verify_signature(path);
@@ -718,6 +746,13 @@ mod tests {
         ProcessSampler::new().expect("process sampler")
     }
 
+    fn notepad_path() -> Option<PathBuf> {
+        let path = PathBuf::from(std::env::var("SystemRoot").expect("SystemRoot"))
+            .join("System32")
+            .join("notepad.exe");
+        path.is_file().then_some(path)
+    }
+
     #[test]
     fn snapshot_contains_the_current_process_with_identity_fields() {
         let mut sampler = sampler();
@@ -786,12 +821,9 @@ mod tests {
 
     #[test]
     fn system_binaries_are_trusted_via_catalog() {
-        let path = PathBuf::from(std::env::var("SystemRoot").expect("SystemRoot"))
-            .join("System32")
-            .join("notepad.exe");
-        if !path.is_file() {
+        let Some(path) = notepad_path() else {
             return;
-        }
+        };
 
         assert!(
             matches!(find_catalog(&path), CatalogLookup::Found(_)),
@@ -845,8 +877,21 @@ mod tests {
     }
 
     #[test]
+    fn a_shared_signature_cache_serves_the_next_sampler() {
+        let path = notepad_path().expect("notepad.exe");
+        let seeded = SignatureInfo::trusted(Some("Sentinel Publisher".to_string()));
+        let cache = SignatureCache::default();
+        cache.insert(path.to_string_lossy().to_ascii_lowercase(), seeded.clone());
+
+        let sampler = ProcessSampler::with_cache(cache.clone()).expect("process sampler");
+        let info = sampler.signature_for(Some(&path));
+
+        assert_eq!(info, seeded);
+    }
+
+    #[test]
     fn signature_cache_reuses_results() {
-        let mut sampler = sampler();
+        let sampler = sampler();
         let path = PathBuf::from(std::env::var("SystemRoot").expect("SystemRoot"))
             .join("System32")
             .join("kernel32.dll");

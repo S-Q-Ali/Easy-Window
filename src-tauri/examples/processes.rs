@@ -8,6 +8,8 @@
 
 #[cfg(windows)]
 fn main() {
+    use std::time::Instant;
+
     use easy_window_lib::monitor::process::ProcessSampler;
 
     let mut sampler = match ProcessSampler::new() {
@@ -18,7 +20,13 @@ fn main() {
         }
     };
 
+    let started = Instant::now();
     let snapshot = sampler.snapshot();
+    let cold = started.elapsed();
+
+    let started = Instant::now();
+    let second = sampler.snapshot();
+    let warm = started.elapsed();
 
     println!(
         "{:<7} {:<7} {:<5} {:<30} {:<9} {:<30} WINDOW TITLE / PATH",
@@ -60,6 +68,10 @@ fn main() {
     }
 
     println!("\n{} processes", snapshot.len());
+    println!(
+        "cold snapshot {cold:?}, warm snapshot {warm:?}, {} processes on the second pass",
+        second.len()
+    );
 
     fn truncate(value: &str, max: usize) -> String {
         if value.chars().count() <= max {
