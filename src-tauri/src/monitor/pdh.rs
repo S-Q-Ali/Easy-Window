@@ -10,7 +10,7 @@
 //! outcome, because a zero left in an unsampled slot is not a measurement and
 //! must not be forwarded as one.
 
-use std::marker::PhantomData;
+use std::cell::RefCell;
 use std::mem::size_of;
 
 use windows::Win32::System::Performance::{
@@ -86,6 +86,11 @@ pub enum PdhError {
     /// The instance list outgrew the buffer while it was being copied.
     #[error("the counter array kept growing while it was being read")]
     BufferTooSmall,
+    /// The counter was never added to this query — an id from another query,
+    /// or one built by hand. PDH would answer with a broken handle; naming it
+    /// here keeps the mistake in the wrapper's vocabulary.
+    #[error("this query has no such counter")]
+    UnknownCounter,
     #[error("PDH call failed with status {0:#010x}")]
     Status(u32),
 }
@@ -132,18 +137,19 @@ pub(crate) fn sample_of(instance: String, code: u32, double_value: f64) -> Sampl
     }
 }
 
-/// A live PDH query. Closing it is dropping it, which also releases every
-/// counter added to it.
+/// A live PDH query and the counters added to it. Dropping the query releases
+/// every counter too, which is why a counter is an index into this query and
+/// not a borrowed handle: a sampler has to own the query and its counter in
+/// one struct, and a borrow cannot live inside the struct it borrows from.
 pub struct Query {
     handle: Owned<PDH_HQUERY>,
+    counters: RefCell<Vec<PDH_HCOUNTER>>,
 }
 
-/// A counter added to a [`Query`]. PDH releases it when the query closes, so it
-/// carries the query's lifetime instead of a dangling raw handle.
-pub struct Counter<'q> {
-    handle: PDH_HCOUNTER,
-    query: PhantomData<&'q Query>,
-}
+/// Names one counter of one [`Query`]. An id from another query is refused as
+/// [`PdhError::UnknownCounter`] rather than handed to PDH as a broken handle.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct CounterId(usize);
 
 impl Query {
     pub fn open() -> Result<Self, PdhError> {
@@ -156,12 +162,13 @@ impl Query {
         Ok(Self {
             // Safety: the call above returned a query this handle owns.
             handle: unsafe { Owned::new(handle) },
+            counters: RefCell::new(Vec::new()),
         })
     }
 
     /// Adds a counter by its English path so the query reads the same on every
     /// locale. The path is never rebuilt per tick.
-    pub fn add(&self, path: &str) -> Result<Counter<'_>, PdhError> {
+    pub fn add(&self, path: &str) -> Result<CounterId, PdhError> {
         let wide = to_wide(path);
         let mut handle = PDH_HCOUNTER::default();
         let code =
@@ -170,10 +177,18 @@ impl Query {
             return Err(error_from_status(code));
         }
 
-        Ok(Counter {
-            handle,
-            query: PhantomData,
-        })
+        let mut counters = self.counters.borrow_mut();
+        let id = CounterId(counters.len());
+        counters.push(handle);
+        Ok(id)
+    }
+
+    fn counter(&self, id: CounterId) -> Result<PDH_HCOUNTER, PdhError> {
+        self.counters
+            .borrow()
+            .get(id.0)
+            .copied()
+            .ok_or(PdhError::UnknownCounter)
     }
 
     /// Takes one reading for every counter in the query. A rate counter needs
@@ -192,11 +207,11 @@ impl Query {
 
     /// The value of a single-instance counter, or `None` when it has not been
     /// sampled yet.
-    pub fn value(&self, counter: &Counter<'_>) -> Result<Option<f64>, PdhError> {
+    pub fn value(&self, counter: CounterId) -> Result<Option<f64>, PdhError> {
+        let handle = self.counter(counter)?;
         let mut formatted = PDH_FMT_COUNTERVALUE::default();
-        let code = unsafe {
-            PdhGetFormattedCounterValue(counter.handle, PDH_FMT_DOUBLE, None, &mut formatted)
-        };
+        let code =
+            unsafe { PdhGetFormattedCounterValue(handle, PDH_FMT_DOUBLE, None, &mut formatted) };
         // A counter read before its first full interval has no value, which is
         // `None` rather than a failure.
         if is_no_data_yet(code) {
@@ -213,7 +228,8 @@ impl Query {
     }
 
     /// One [`Sample`] per instance of a wildcard counter.
-    pub fn samples(&self, counter: &Counter<'_>) -> Result<Vec<Sample>, PdhError> {
+    pub fn samples(&self, counter: CounterId) -> Result<Vec<Sample>, PdhError> {
+        let handle = self.counter(counter)?;
         let mut buffer: Vec<PDH_FMT_COUNTERVALUE_ITEM_W> = Vec::new();
         let mut attempts = 0;
 
@@ -230,13 +246,7 @@ impl Query {
             // Safety: the buffer, when present, is `size` bytes of the item
             // layout PDH writes.
             let code = unsafe {
-                PdhGetFormattedCounterArrayW(
-                    counter.handle,
-                    PDH_FMT_DOUBLE,
-                    &mut size,
-                    &mut count,
-                    pointer,
-                )
+                PdhGetFormattedCounterArrayW(handle, PDH_FMT_DOUBLE, &mut size, &mut count, pointer)
             };
 
             if code == PDH_MORE_DATA {
@@ -560,10 +570,10 @@ mod tests {
         // The first read of a freshly added counter is the call PDH uses to
         // build its state, and it answers with nothing. Reading again after the
         // next collect is what a running sampler does.
-        let _first_read = query.value(&counter);
+        let _first_read = query.value(counter);
         query.collect().expect("third collect");
 
-        let value = query.value(&counter).expect("formatted value");
+        let value = query.value(counter).expect("formatted value");
         assert!(
             value.is_some_and(|percent| percent.is_finite()),
             "the _Total processor counter must read a finite percentage, got {value:?}"
@@ -584,10 +594,10 @@ mod tests {
         // Measured on this machine: the first array read of a fresh wildcard
         // counter answers "no data yet" while PDH builds the instance list. The
         // next tick reads the values, which is the cadence the scheduler uses.
-        let _first_read = query.samples(&counter);
+        let _first_read = query.samples(counter);
         query.collect().expect("third collect");
 
-        let samples = query.samples(&counter).expect("counter array");
+        let samples = query.samples(counter).expect("counter array");
         assert!(!samples.is_empty(), "at least one process instance");
         assert!(
             samples.iter().all(|sample| !sample.instance.is_empty()),
@@ -597,6 +607,18 @@ mod tests {
             samples.iter().any(|sample| sample.value.is_some()),
             "a machine running processes must report at least one sampled instance"
         );
+    }
+
+    #[test]
+    fn a_counter_id_is_only_meaningful_for_the_query_that_returned_it() {
+        let other = Query::open().expect("pdh query");
+        let counter = other
+            .add(r"\Process(_Total)\% Processor Time")
+            .expect("english counter path");
+        let query = Query::open().expect("a second pdh query");
+
+        assert_eq!(query.value(counter), Err(PdhError::UnknownCounter));
+        assert_eq!(query.samples(counter), Err(PdhError::UnknownCounter));
     }
 
     #[test]

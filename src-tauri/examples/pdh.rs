@@ -52,14 +52,14 @@ fn main() {
         }
         let collect = started.elapsed();
 
-        let value = match query.value(&total) {
+        let value = match query.value(total) {
             Ok(Some(percent)) => format!("{percent:.1}%"),
             Ok(None) => "not sampled".to_string(),
             Err(error) => format!("{error}"),
         };
 
         let started = Instant::now();
-        let samples = query.samples(&wildcard);
+        let samples = query.samples(wildcard);
         let read = started.elapsed();
 
         match samples {
@@ -86,7 +86,7 @@ fn main() {
 
         // The parser against every instance name this machine actually
         // reports: unparsed rows would name the shape it could not read.
-        if let Some(counter) = &gpu {
+        if let Some(counter) = gpu {
             match query.samples(counter) {
                 Ok(samples) => {
                     let started = Instant::now();
