@@ -74,6 +74,7 @@ tests/e2e/            Playwright extension tests
 
 - Environment tested: Windows 11 build 26300, Chrome 156, WebView2 156, Rust 1.99, Node 24, .NET 8.
 - Per-process GPU: PDH `\GPU Engine(*)\Utilization Percentage`; instance names contain `pid_<PID>`.
+- PDH timing (measured, see `tasks/plan.md`): Windows refreshes performance data ~once per second, the first read of a freshly added wildcard returns "no data yet" and must be treated as a priming read, and a reused query with one `collect` per tick costs ~7 ms + ~1 ms read for ~270 process instances. `monitor::pdh::object_instances` refreshes the object list and takes ~0.5 s — probe once, never per tick.
 - Chrome cookie DB: `%LOCALAPPDATA%\Google\Chrome\User Data\<profile>\Network\Cookies`. If Chrome is running, copy `Cookies`, `Cookies-wal`, and `Cookies-shm` before reading.
 - Native messaging manifest: `HKCU\Software\Google\Chrome\NativeMessagingHosts\<name>` with an exact extension ID in `allowed_origins`.
 - Chrome Web Store broad cookie permissions are a release risk; unpacked extension is the MVP path.
