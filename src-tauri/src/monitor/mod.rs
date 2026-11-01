@@ -13,4 +13,7 @@ pub mod pdh;
 pub mod process;
 
 #[cfg(windows)]
+pub mod types;
+
+#[cfg(windows)]
 pub use process::{ProcessSampler, ProcessSnapshot, SignatureStatus};
