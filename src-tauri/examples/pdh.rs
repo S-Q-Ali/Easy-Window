@@ -11,6 +11,7 @@
 fn main() {
     use std::time::{Duration, Instant};
 
+    use easy_window_lib::monitor::gpu;
     use easy_window_lib::monitor::pdh::{PdhError, Query, object_instances};
 
     let query = match Query::open() {
@@ -32,6 +33,10 @@ fn main() {
             std::process::exit(1);
         }
     };
+
+    // The GPU engine counter exists only where a WDDM driver registered it; a
+    // missing one is a fact about the machine, so the example keeps going.
+    let gpu = query.add(r"\GPU Engine(*)\Utilization Percentage").ok();
 
     // Five one-second ticks. The first read of a fresh wildcard counter can
     // answer "no data yet" because PDH builds the instance list on that call;
@@ -77,6 +82,36 @@ fn main() {
                 println!("tick {tick}: no array yet, _Total {value}, collect {collect:?}");
             }
             Err(error) => println!("tick {tick}: array read failed: {error}"),
+        }
+
+        // The parser against every instance name this machine actually
+        // reports: unparsed rows would name the shape it could not read.
+        if let Some(counter) = &gpu {
+            match query.samples(counter) {
+                Ok(samples) => {
+                    let started = Instant::now();
+                    let report = gpu::aggregate(&samples);
+                    let top: Vec<String> = report
+                        .processes
+                        .iter()
+                        .take(3)
+                        .map(|row| match row.percent {
+                            Some(percent) => format!("pid {} {percent:.1}%", row.pid),
+                            None => format!("pid {} unsampled", row.pid),
+                        })
+                        .collect();
+                    println!(
+                        "tick {tick}: gpu {} engines -> {} processes, {} unparsed, {:?}, aggregate {:?}",
+                        samples.len(),
+                        report.processes.len(),
+                        report.unparsed.len(),
+                        top,
+                        started.elapsed(),
+                    );
+                }
+                Err(PdhError::NoData) => println!("tick {tick}: gpu array not ready yet"),
+                Err(error) => println!("tick {tick}: gpu array read failed: {error}"),
+            }
         }
     }
 

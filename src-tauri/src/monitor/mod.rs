@@ -4,6 +4,9 @@
 //! `crate::actions` and must re-verify process identity before acting.
 
 #[cfg(windows)]
+pub mod gpu;
+
+#[cfg(windows)]
 pub mod pdh;
 
 #[cfg(windows)]
