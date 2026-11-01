@@ -188,15 +188,19 @@ impl Scheduler {
         self.shared.latest()
     }
 
-    /// Runs the loop on its own thread until the returned handle is stopped.
-    pub fn spawn(mut self) -> RunningScheduler {
+    /// Runs the loop on its own thread until the returned handle is stopped,
+    /// handing every tick it publishes to `on_tick` first. That is how the app
+    /// gets a tick to emit without a second reader polling the shared slot and
+    /// missing the ones it did not ask for.
+    pub fn spawn(mut self, on_tick: impl Fn(&Tick) + Send + 'static) -> RunningScheduler {
         let (stop, control) = mpsc::channel();
         let shared = self.shared.clone();
         let process_interval = self.process_interval;
 
         let join = thread::spawn(move || {
             loop {
-                self.tick();
+                let tick = self.tick();
+                on_tick(&tick);
                 match control.recv_timeout(process_interval) {
                     Err(RecvTimeoutError::Timeout) => {}
                     // Either way, stop ticking: a message asked, or the handle was
@@ -356,6 +360,32 @@ mod tests {
     }
 
     #[test]
+    fn the_loop_hands_every_published_tick_to_its_sink() {
+        // The app emits each tick to the window from inside the loop, so the
+        // loop has to be able to hand the tick it just published to a consumer
+        // without that consumer reaching into the shared slot and racing itself.
+        let (sender, receiver) = mpsc::channel();
+        let running =
+            Scheduler::with_intervals(Duration::from_millis(200), Duration::from_millis(1_400))
+                .expect("scheduler")
+                .spawn(move |tick| {
+                    let _ = sender.send(tick.sequence);
+                });
+
+        let first = receiver
+            .recv_timeout(Duration::from_secs(30))
+            .expect("a tick reached the sink");
+        let second = receiver
+            .recv_timeout(Duration::from_secs(30))
+            .expect("a second tick reached the sink");
+        assert!(second > first, "the sink sees the loop advance");
+
+        let shared = running.stop().expect("the loop joins");
+        let latest = shared.latest().expect("the last tick is published");
+        assert!(latest.sequence >= second);
+    }
+
+    #[test]
     fn the_loop_publishes_numbered_ticks_and_stops_when_told() {
         let mut scheduler =
             Scheduler::with_intervals(Duration::from_millis(100), Duration::from_millis(100))
@@ -370,7 +400,7 @@ mod tests {
         assert_eq!(second.sequence, 2);
         assert_eq!(scheduler.latest().map(|tick| tick.sequence), Some(2));
 
-        let running = scheduler.spawn();
+        let running = scheduler.spawn(|_| {});
         let deadline = Instant::now() + Duration::from_secs(30);
         loop {
             if running.latest().is_some_and(|tick| tick.sequence >= 4) {
@@ -450,10 +480,20 @@ mod tests {
             read.sequence + 1,
             "the next tick is one later"
         );
-        assert_eq!(
-            carried.gpu_sequence,
-            Some(read.sequence),
-            "and still carries the figures of the tick that measured them"
+        // Two legal outcomes, and the difference is real rather than a flake to
+        // paper over: the figures were carried from the tick that read them, or
+        // that tick took longer than the GPU interval and this one read the
+        // counter again — the measured mean tick is 372 ms of a 1 s interval and
+        // the worst ran 4.07 s, so a fixed wall-time assumption here would be the
+        // bug. What must never happen is figures stamped by a tick that did not
+        // produce them, or a stamp that disappears while the figures stay.
+        let stamp = carried
+            .gpu_sequence
+            .expect("figures a tick measured are not un-measured by the next one");
+        assert!(
+            stamp == read.sequence || stamp == carried.sequence,
+            "tick {} carries GPU figures stamped {stamp}, which no recent tick read",
+            carried.sequence
         );
     }
 

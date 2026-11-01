@@ -28,21 +28,36 @@ fn app_info() -> AppInfo {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    tauri::Builder::default()
-        .setup(|app| {
-            let data_dir = app.path().app_local_data_dir()?;
-            let connection = store::db::open(&data_dir.join("easy-window.db"))?;
-            app.manage(AppState {
-                db: Mutex::new(connection),
-            });
-            Ok(())
-        })
-        .invoke_handler(tauri::generate_handler![
-            app_info,
-            commands::list_audit_events,
-            commands::get_setting,
-            commands::set_setting,
-        ])
+    let builder = tauri::Builder::default().setup(|app| {
+        let data_dir = app.path().app_local_data_dir()?;
+        let connection = store::db::open(&data_dir.join("easy-window.db"))?;
+        app.manage(AppState {
+            db: Mutex::new(connection),
+        });
+        #[cfg(windows)]
+        app.manage(commands::processes::Metrics::start(app.handle().clone()));
+        Ok(())
+    });
+
+    // `generate_handler!` is a macro over a fixed list, so the commands that
+    // exist only where the sampler exists are registered by their own chain.
+    #[cfg(windows)]
+    let builder = builder.invoke_handler(tauri::generate_handler![
+        app_info,
+        commands::list_audit_events,
+        commands::get_setting,
+        commands::set_setting,
+        commands::processes::latest_tick,
+    ]);
+    #[cfg(not(windows))]
+    let builder = builder.invoke_handler(tauri::generate_handler![
+        app_info,
+        commands::list_audit_events,
+        commands::get_setting,
+        commands::set_setting,
+    ]);
+
+    builder
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }

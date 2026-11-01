@@ -6,6 +6,9 @@ use tauri::State;
 use crate::store::audit::{self, AuditEvent};
 use crate::store::settings;
 
+#[cfg(windows)]
+pub mod processes;
+
 /// Shared handle to the local store. One connection, guarded by a mutex.
 pub struct AppState {
     pub db: Mutex<Connection>,
