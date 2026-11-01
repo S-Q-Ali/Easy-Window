@@ -42,7 +42,7 @@ The desktop app is a Tauri 2 shell with a React/TypeScript UI. A separate Rust n
 ### Phase 1 — Windows Performance Guard
 
 - [x] Task 5: Process snapshot with `sysinfo`, publisher/signature/path, critical-process denylist.
-- [ ] Task 6: PDH sampling for GPU, CPU and disk rates from `sysinfo`; system summary; sampling scheduler. Design in "Task 6 design" below.
+- [x] Task 6: PDH sampling for GPU, CPU and disk rates from `sysinfo`; system summary; sampling scheduler. Design in "Task 6 design" below.
 - [ ] Task 7: Tauri commands + process table UI with sorting, filtering, sparklines.
 - [ ] Task 8: Process risk scoring, "safe candidate" explanations, user feedback.
 - [ ] Task 9: Graceful close action, confirmation dialog, audit event.
@@ -193,13 +193,25 @@ and five one-second ticks; run it with `cargo run --example pdh`.
   `pid_<n>_luid_0x_-prefixed-hex_0x_-prefixed-hex_phys_<n>_eng_<n>_engtype_<verbatim>`;
   type counts varied between captures (60 empty types then, ~80 now), which is exactly
   why the type is kept as a string, never an enum.
-- **The 6.4 loop keeps the idle budget:** 60 ticks of the default clocks (1 s process,
-  2 s GPU) in release cost a mean **0.65 % CPU**, max 0.99 %, and **19 MB** peak RAM —
-  both inside the <1 % / <80 MB target. A warm tick is ~101 ms of wall time against a
-  cold first tick of **10.1 s**, which is the Task 5 signature cost, not the sampling
-  cost: the wall time is mostly waiting inside Windows, since the process's own CPU
-  stayed under 1 % while it ran. GPU engines sampled 296, unsampled 0, unparsed 0;
-  3 of the 60 ticks were warming, as D4's first-collect rule predicts.
+- **The 6.4 loop, measured over 60 s:** the default clocks (1 s process, 2 s GPU) in
+  release cost a mean **0.65 % CPU**, max 0.99 %, and **19 MB** peak RAM. A warm tick is
+  ~101 ms of wall time against a cold first tick of **10.1 s**, which is the Task 5
+  signature cost, not the sampling cost: the wall time is mostly waiting inside Windows,
+  since the process's own CPU stayed under 1 % while it ran. GPU engines sampled 296,
+  unsampled 0, unparsed 0; 3 of the 60 ticks were warming, as D4's first-collect rule
+  predicts. Ten minutes of the same loop reads worse — see the 6.5 bullet, which
+  supersedes the budget claim this one implied.
+- **The 6.5 harness over 600 s is the budget number:** 599 steady ticks after an 8.26 s
+  cold first tick, at min 41.9 ms / median 259.9 ms / mean **372.0 ms** / max **4.07 s** —
+  37.2 % duty on a one-second interval, and one tick that overran it four times. Own CPU
+  mean **0.963 %**, median 0.916 %, peak **5.769 %**, with **230 of 599 ticks at or over
+  1 %**: the average is inside the budget, individual ticks are not, so Task 11's
+  pause-when-hidden and EcoQoS work is what makes the target true rather than this loop.
+  Peak RAM **19 MB** against 80 MB, with room to spare. Rows 260/274/302; rows without a
+  CPU figure 129/131/286, where the 286 is the first tick having no window to measure
+  over — the steady figure is the ~131 of 274 that Task 7 must design around. GPU: 599
+  ticks collected and one that did not (the first, `Warming`), peak 318 engines sampled,
+  11 unsampled, none unparsed.
 - **The machine total agrees with the OS:** `sysinfo`'s figure read 88.8–90.6 % in that
   minute while `Get-Counter '\Processor(_Total)\% Processor Time'` read 95.4–97.0 % and
   `'\Processor Information(_Total)\% Processor Time'` read 86.6 %. The two OS counters
@@ -261,6 +273,92 @@ Data Status Codes" on learn.microsoft.com. GPU aggregation practice: System Info
 5. **6.5 Overhead harness + docs.** An example that prints per-tick wall time and the
    app's own CPU so Task 11 can assert the <1% / <80 MB budget; correct the `AGENTS.md`
    GPU gotcha.
+
+## Task 7 design: the process table
+
+Task 6 puts a fresh `Tick` in a shared slot once a second, in Rust, with nobody
+reading it. Task 7 moves it across the IPC boundary and renders roughly 290 rows
+without adding to a sampling cost that already eats a large share of the interval.
+
+### Measured facts (this machine, 2026-11-02)
+
+- Rows per tick: 260–302, mean 274, over the 6.5 record, so the table is a few hundred
+  rows, not tens of thousands. Virtualization is not obviously needed and must be proven
+  needed, not assumed.
+- The tick rate the UI would subscribe to is not 1 Hz: over 599 steady ticks the same loop
+  measured min 41.9 ms / median 259.9 ms / mean 372.0 ms / max **4.07 s**, because a tick
+  that overruns its interval simply delays the next one. Frames therefore arrive in bursts
+  and gaps, so animation and sparkline sampling must key off `sequence`, not off the
+  wall clock. The cold first tick is 8.26 s (it verifies every signature), which is why
+  the table needs a loading state that is honest about taking seconds.
+- Anything Task 7 adds to the tick path is measured by the harness, not estimated — the
+  average tick already costs 37 % of the interval and 230 of 599 ticks put this process
+  over its 1 % CPU budget on their own.
+- Nothing on the JS side can consume a `Tick` yet: `Tick`, `ProcessMetrics`,
+  `SystemSummary` and `GpuTelemetry` carry `Debug`/`Clone` only, and `ProcessSnapshot`
+  is 16 fields — ten of them `Option`, two of them enums (`SignatureStatus`,
+  `CriticalReason`).
+- `core:default` in the shipped ACL manifest (`src-tauri/gen/schemas/acl-manifests.json`)
+  expands to `core:event:default`, which is `allow-listen`, `allow-unlisten`,
+  `allow-emit`, `allow-emit-to`. Events need no capability change.
+- The frontend calls `invoke` directly in exactly two places (`Audit.tsx`,
+  `AppShell.tsx`) and never calls `listen`; there is no API layer to fit into.
+- Task 7's verify line in `tasks/todo.md` says `npm test` and an axe check. Neither is
+  available: `npm test` is not a script, and no JS test runner, DOM library or axe
+  package is a dependency. The repo-map entries `extension/`, `tests/e2e/`,
+  `src-tauri/src/actions/` and `src/ipc/` do not exist either — that map is a roadmap.
+
+### Sources
+
+Tauri 2: `tauri::Emitter` (`AppHandle::emit`), `@tauri-apps/api/event` `listen`,
+`tauri::Builder::manage` / `State`, and the generated ACL manifests for what
+`core:default` actually grants. React 19: `useSyncExternalStore` for a subscription
+that must not re-render on an unrelated state change; inline SVG for the sparkline,
+no charting dependency.
+
+### Decisions (proposed, awaiting approval)
+
+- **T1 — one scheduler, owned by the app.** `setup()` builds `Scheduler::new()?` and
+  `spawn()`s it into managed state; the app stops it on exit. A second instance would
+  open a second PDH query over the same 307 engines and double the cost.
+- **T2 — pull once, then push.** `latest_tick()` answers the first frame so the table
+  is populated on mount instead of one second later; every tick after that arrives as
+  one `metrics://tick` event. A pure poll makes the webview's timer the clock; a pure
+  push leaves the first paint empty.
+- **T3 — serialize the existing shapes; no parallel view type.** Add `Serialize` to the
+  monitor types with `#[serde(rename_all = "camelCase")]`. These were designed as the
+  tick's published shapes, the fields are all metadata the UI may show, and a second
+  struct mirroring them is a third thing to keep in sync with the sampler.
+- **T4 — row identity is `pid` + `startTime`, never `pid` alone.** The invariant in
+  `AGENTS.md` exists because Windows recycles PIDs; a sparkline keyed on PID silently
+  bridges two different processes.
+- **T5 — sparkline history lives in the webview.** A per-identity ring of the last 60
+  samples per metric, built from the events. The sampler's RAM is the budgeted number
+  (Task 11), and ~290 × 60 × 3 floats is trivial there but buys the loop nothing.
+- **T6 — an unmeasured metric is an em dash that sorts last.** Same rule as D2, applied
+  to pixels: a blank figure must never look like an idle process, and the header shows
+  `unmeasuredProcesses` so "why is half the table blank" is answered in the UI.
+- **T7 — payload size is measured before it is trimmed.** The harness gains a per-tick
+  serialized byte count in 7.1. If a few hundred KB per second shows up as a cost, the
+  fix is a slimmer event, decided on the number — not preemptively.
+- **T8 — Task 7 ships no pause-when-hidden and no EcoQoS.** Task 11 owns the budget and
+  the window events; this task only starts and stops the loop with the app.
+
+### Sub-tasks
+
+1. **7.1 Serialize the published shapes.** Derives, camelCase keys, a test that a `Tick`
+   becomes the JSON the UI expects, and the harness prints bytes per tick. Rust only.
+2. **7.2 Wire the loop to the window.** `commands.rs` becomes `commands/mod.rs` plus
+   `commands/processes.rs`; `setup()` spawns the scheduler; `latest_tick()` and the
+   per-tick emit. Verify that an emit from the sampling thread reaches the webview.
+3. **7.3 `ProcessTable`.** Sortable headers, name/PID filter, em dash for `None`, a
+   stale-GPU marker from `gpuSequence`, and the empty/loading/error states; keyboard
+   accessible with `aria-sort` on real buttons.
+4. **7.4 Sparklines.** The webview ring buffer keyed by `pid`+`startTime`, inline SVG,
+   hidden from assistive tech with the numeric value in text beside it.
+5. **7.5 The verification gap.** Either add a JS test stack (a new dependency set) or
+   correct Task 7's verify line to what actually runs. The user decides; a manual UI
+   pass gets recorded either way.
 
 ## Risks and mitigations
 
