@@ -1,0 +1,13 @@
+# Binaries must never be diffed or re-eol'd.
+*.png binary
+*.jpg binary
+*.ico binary
+*.icns binary
+*.ttf binary
+*.woff binary
+*.woff2 binary
+*.db binary
+
+# The lockfile is generated; keep diffs out of review noise.
+package-lock.json -diff linguist-generated
+src-tauri/Cargo.lock -diff linguist-generated
