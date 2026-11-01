@@ -14,7 +14,10 @@
 //! sample adds nothing to the sum and is counted, so a total built from
 //! partial data stays distinguishable from an idle GPU.
 
+use std::time::{Duration, Instant};
+
 use super::pdh::Sample;
+use super::pdh::{self, PdhError, Query};
 
 /// One engine of one process, as its instance name describes it.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -165,6 +168,156 @@ pub fn aggregate(samples: &[Sample]) -> GpuReport {
         processes,
         unparsed,
     }
+}
+
+/// What one GPU tick can say about this machine.
+#[derive(Debug, Clone, PartialEq)]
+pub enum GpuOutcome {
+    /// Engines were read and grouped. An empty report is a real answer: no
+    /// process used the GPU in this interval.
+    Sampled { report: GpuReport },
+    /// The counter is armed but Windows has not closed an interval over it
+    /// yet. The next tick answers; this one has no number to give.
+    Warming,
+    /// This machine will not answer — no WDDM driver means no `GPU Engine`
+    /// object. The reason is shown to the user rather than a silent zero.
+    Unavailable { reason: String },
+}
+
+/// The counter path every Windows GPU driver worth its name registers.
+const GPU_ENGINE_COUNTER: &str = r"\GPU Engine(*)\Utilization Percentage";
+
+/// How long a machine that said "no such object" is believed before the
+/// question is asked again. A driver installed while the app runs becomes
+/// visible at the next retry, and no tick ever waits on a probe.
+const DEFAULT_RETRY_AFTER: Duration = Duration::from_secs(300);
+
+/// Reads per-process GPU usage once per tick from one reused PDH query.
+///
+/// The query is opened and the wildcard counter added a single time (decision
+/// D3); a missing object is remembered rather than rebuilt every tick
+/// (decision D5). Transient read failures keep the query alive, because a
+/// churned instance list is not evidence that the machine has no GPU.
+pub struct GpuSampler {
+    counter_path: String,
+    /// The live query and its counter, taken out during a tick and put back.
+    armed: Option<(Query, pdh::CounterId)>,
+    /// Why the object was refused, and when to ask again.
+    absent: Option<(String, Instant)>,
+    retry_after: Duration,
+    /// How many times a query has been armed. D5 claims this stays at one
+    /// across a whole run on a machine without the object.
+    attempts: u32,
+}
+
+// Safety: PDH handles are raw pointers and are not thread-safe, so this
+// sampler is confined to the thread that owns it — every read goes through
+// `&mut self` and no reference to the query ever escapes.
+unsafe impl Send for GpuSampler {}
+
+impl GpuSampler {
+    pub fn new() -> Self {
+        Self::arming(GPU_ENGINE_COUNTER, DEFAULT_RETRY_AFTER)
+    }
+
+    /// Arms a sampler for any counter path, with a chosen retry wait. A path
+    /// this machine does not register is remembered as unavailable.
+    pub fn arming(counter_path: &str, retry_after: Duration) -> Self {
+        let mut sampler = Self {
+            counter_path: counter_path.to_string(),
+            armed: None,
+            absent: None,
+            retry_after,
+            attempts: 0,
+        };
+        sampler.arm();
+        sampler
+    }
+
+    fn arm(&mut self) {
+        self.attempts += 1;
+        match open_and_add(&self.counter_path) {
+            Ok(armed) => {
+                self.armed = Some(armed);
+                self.absent = None;
+            }
+            Err(reason) => {
+                self.armed = None;
+                self.absent = Some((reason, Instant::now() + self.retry_after));
+            }
+        }
+    }
+
+    /// Collects once and reads every engine, grouping the result by PID.
+    pub fn tick(&mut self) -> GpuOutcome {
+        if let Some((query, counter)) = self.armed.take() {
+            let reading = query
+                .collect()
+                .and_then(|()| query.samples(counter))
+                .map(|samples| GpuOutcome::Sampled {
+                    report: aggregate(&samples),
+                })
+                .or_else(|error| {
+                    if error == PdhError::NoData {
+                        Ok(GpuOutcome::Warming)
+                    } else {
+                        Err(error)
+                    }
+                });
+
+            match reading {
+                Ok(outcome) => {
+                    self.armed = Some((query, counter));
+                    outcome
+                }
+                Err(error) => {
+                    let reason = error.to_string();
+                    if error == PdhError::NoSuchObject || error == PdhError::InvalidPath {
+                        // A machine fact: remember it, and do not spend every
+                        // tick rebuilding the same query.
+                        self.absent = Some((reason.clone(), Instant::now() + self.retry_after));
+                    } else {
+                        self.armed = Some((query, counter));
+                    }
+                    GpuOutcome::Unavailable { reason }
+                }
+            }
+        } else if let Some((reason, next_retry)) = &self.absent {
+            if Instant::now() < *next_retry {
+                return GpuOutcome::Unavailable {
+                    reason: reason.clone(),
+                };
+            }
+
+            let reason = reason.clone();
+            self.arm();
+            if self.armed.is_some() {
+                // A driver appeared since the last verdict. The first read of
+                // a fresh wildcard warms, so no number is claimed yet.
+                return GpuOutcome::Warming;
+            }
+
+            GpuOutcome::Unavailable { reason }
+        } else {
+            // Unreachable: `armed` and `absent` are only ever empty together
+            // before the first arm, which the constructor performs.
+            GpuOutcome::Unavailable {
+                reason: "the GPU sampler was never armed".to_string(),
+            }
+        }
+    }
+}
+
+impl Default for GpuSampler {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+fn open_and_add(path: &str) -> Result<(Query, pdh::CounterId), String> {
+    let query = Query::open().map_err(|error| error.to_string())?;
+    let counter = query.add(path).map_err(|error| error.to_string())?;
+    Ok((query, counter))
 }
 
 #[cfg(test)]
@@ -395,5 +548,109 @@ mod tests {
                 unparsed: Vec::new()
             }
         );
+    }
+
+    // The sampler's promises. A machine without a `GPU Engine` object is the
+    // case this code has to get right, so it is simulated with a path no
+    // driver registers; only the last test needs a GPU to answer.
+    const NO_SUCH_COUNTER: &str =
+        r"\Easy Window Not A Performance Object(\*)\Utilization Percentage";
+
+    #[test]
+    fn an_absent_object_is_reported_with_its_reason() {
+        let mut sampler = GpuSampler::arming(NO_SUCH_COUNTER, Duration::from_secs(300));
+
+        assert_eq!(
+            sampler.tick(),
+            GpuOutcome::Unavailable {
+                reason: "the performance object is not available on this machine".to_string()
+            }
+        );
+    }
+
+    #[test]
+    fn an_absent_object_is_not_rebuilt_every_tick() {
+        // Decision D5: the verdict is remembered. Reopening the query on every
+        // tick would spend the whole budget on a machine that cannot answer.
+        let mut sampler = GpuSampler::arming(NO_SUCH_COUNTER, Duration::from_secs(300));
+        for _ in 0..5 {
+            assert!(matches!(sampler.tick(), GpuOutcome::Unavailable { .. }));
+        }
+
+        assert_eq!(
+            sampler.attempts, 1,
+            "one probe is enough until the retry wait passes"
+        );
+    }
+
+    #[test]
+    fn the_machine_is_asked_again_after_the_retry_wait() {
+        // A driver installed while the app runs has to become visible, so an
+        // expired wait arms a fresh query instead of repeating the old answer.
+        let mut sampler = GpuSampler::arming(NO_SUCH_COUNTER, Duration::ZERO);
+        sampler.tick();
+        sampler.tick();
+
+        assert!(
+            sampler.attempts > 1,
+            "an expired wait must probe again, saw {} attempt(s)",
+            sampler.attempts
+        );
+    }
+
+    #[test]
+    fn a_failed_retry_reports_absence_rather_than_warming() {
+        // Warming means "armed, waiting for an interval". Saying it after a
+        // re-probe the machine refused would hide the real answer for a tick.
+        let mut sampler = GpuSampler::arming(NO_SUCH_COUNTER, Duration::ZERO);
+        sampler.tick();
+
+        assert_eq!(
+            sampler.tick(),
+            GpuOutcome::Unavailable {
+                reason: "the performance object is not available on this machine".to_string()
+            },
+            "the retry failed, so the reason must be reported again"
+        );
+    }
+
+    #[test]
+    fn an_absent_counter_keeps_the_reason_instead_of_the_query() {
+        let mut sampler = GpuSampler::arming(NO_SUCH_COUNTER, Duration::from_secs(300));
+        let _ = sampler.tick();
+
+        assert!(sampler.armed.is_none());
+        assert!(sampler.absent.is_some());
+    }
+
+    #[test]
+    fn a_gpu_tick_never_claims_absence_after_a_successful_probe() {
+        // The path here is real, so a machine with a WDDM driver warms on the
+        // first tick and samples on a later one. Without one, the probe itself
+        // would have failed and there is nothing to assert.
+        let mut sampler = GpuSampler::new();
+        if sampler.armed.is_none() {
+            return;
+        }
+
+        let first = sampler.tick();
+        assert!(
+            !matches!(first, GpuOutcome::Unavailable { .. }),
+            "an armed counter cannot be unavailable: {first:?}"
+        );
+
+        // Windows recomputes performance data about once per second.
+        std::thread::sleep(Duration::from_millis(1_500));
+        match sampler.tick() {
+            GpuOutcome::Sampled { report } => {
+                assert!(
+                    report.unparsed.is_empty(),
+                    "a name the parser cannot read is the signal to move to \
+                     D3DKMTQueryStatistics: {:?}",
+                    report.unparsed
+                );
+            }
+            other => panic!("a warmed GPU counter must sample, got {other:?}"),
+        }
     }
 }
