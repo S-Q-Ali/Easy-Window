@@ -144,10 +144,23 @@ Spec: `docs/SPEC.md`
     have no CPU or disk figure and must not render as zero; a tick arrives anywhere between
     42 ms and 4.1 s after the last one, so nothing may assume 1 Hz; the cold first tick
     takes 8.3 s, which is the loading state.
-  - [ ] **7.1** Serialize the published shapes: `serde` derives with camelCase keys on
-    `Tick`, `ProcessMetrics`, `ProcessSnapshot`, `SystemSummary`, `GpuTelemetry` and the two
-    enums, a round-trip test on the JSON keys, and the metrics harness printing bytes per
-    tick. Rust only.
+  - [x] **7.1** Serialize the published shapes.
+    - Done: `Tick`, `ProcessMetrics`, `SystemSummary` and `GpuTelemetry` now derive
+      `Serialize` following the convention Task 5 already set for the rows — camelCase
+      fields, snake_case enum variants. `ProcessSnapshot`, `SignatureStatus` and
+      `CriticalReason` already had it, so the plan's claim that nothing was wire-ready was
+      wrong and is corrected. `GpuTelemetry` is the shape that carries data, so it
+      serializes as a `kind`-tagged union (`{"kind":"sampling","enginesSampled":307,...}`)
+      that a TypeScript reader can discriminate without inferring absence from a missing
+      field. Two tests prove the key names and that an unmeasured metric arrives as `null`,
+      not `0` — D2 carried across the wire.
+    - Measured: the harness serializes each tick outside the tick's own timing, and a
+      90-second release record gives **104–111 KB, mean 106 KB per tick** at 274–289 rows —
+      about 6.4 MB a minute into the webview at 1 Hz. Same record: first tick 11.5 s, mean
+      tick 222.8 ms (22.3 % duty), own CPU mean 0.884 % with 24 of 89 ticks at or over the
+      1 % budget and a 3.289 % peak, 20 MB peak RAM. 105 tests pass.
+    - Files: `src-tauri/src/monitor/types.rs`, `src-tauri/examples/metrics.rs`,
+      `tasks/plan.md`.
   - [ ] **7.2** Wire the loop to the window: `commands.rs` becomes `commands/mod.rs` plus
     `commands/processes.rs` with `latest_tick()`; `setup()` spawns the scheduler into
     managed state and each tick emits `metrics://tick`. Prove the emit reaches the webview

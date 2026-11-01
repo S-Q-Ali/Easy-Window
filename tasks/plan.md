@@ -294,10 +294,15 @@ without adding to a sampling cost that already eats a large share of the interva
 - Anything Task 7 adds to the tick path is measured by the harness, not estimated — the
   average tick already costs 37 % of the interval and 230 of 599 ticks put this process
   over its 1 % CPU budget on their own.
-- Nothing on the JS side can consume a `Tick` yet: `Tick`, `ProcessMetrics`,
-  `SystemSummary` and `GpuTelemetry` carry `Debug`/`Clone` only, and `ProcessSnapshot`
-  is 16 fields — ten of them `Option`, two of them enums (`SignatureStatus`,
-  `CriticalReason`).
+- The payload a tick is now measured, not guessed: **104–111 KB, mean 106 KB** per tick
+  over 89 steady ticks at 274–289 rows, serialized by the harness outside the tick's own
+  timing. One tick per second is roughly 6.4 MB a minute crossing into the webview.
+- The rows were already wire-ready and the tick was not. Task 5 gave `ProcessSnapshot`
+  `Serialize` with camelCase fields and snake_case enum variants, so a signature status
+  arrives as `"trusted"` and a critical reason as `"identity_unavailable"`; the four
+  shapes Task 6 added (`Tick`, `ProcessMetrics`, `SystemSummary`, `GpuTelemetry`) derived
+  `Debug`/`Clone` only, so nothing could publish a whole tick. `ProcessSnapshot` is 16
+  fields — ten `Option`, two enums.
 - `core:default` in the shipped ACL manifest (`src-tauri/gen/schemas/acl-manifests.json`)
   expands to `core:event:default`, which is `allow-listen`, `allow-unlisten`,
   `allow-emit`, `allow-emit-to`. Events need no capability change.
@@ -326,9 +331,13 @@ no charting dependency.
   one `metrics://tick` event. A pure poll makes the webview's timer the clock; a pure
   push leaves the first paint empty.
 - **T3 — serialize the existing shapes; no parallel view type.** Add `Serialize` to the
-  monitor types with `#[serde(rename_all = "camelCase")]`. These were designed as the
-  tick's published shapes, the fields are all metadata the UI may show, and a second
-  struct mirroring them is a third thing to keep in sync with the sampler.
+  four tick shapes and follow the wire convention Task 5 already set for the rows:
+  camelCase fields, snake_case enum variants. `GpuTelemetry` is the one shape that carries
+  data, so it serializes as a tagged union on `kind` — `{"kind":"sampling",
+  "enginesSampled":307,...}` — which a TypeScript reader can discriminate without guessing
+  whether a missing field means warming or absence. These were designed as the tick's
+  published shapes, their fields are all metadata the UI may show, and a second struct
+  mirroring them is a third thing to keep in sync with the sampler.
 - **T4 — row identity is `pid` + `startTime`, never `pid` alone.** The invariant in
   `AGENTS.md` exists because Windows recycles PIDs; a sparkline keyed on PID silently
   bridges two different processes.
@@ -338,9 +347,12 @@ no charting dependency.
 - **T6 — an unmeasured metric is an em dash that sorts last.** Same rule as D2, applied
   to pixels: a blank figure must never look like an idle process, and the header shows
   `unmeasuredProcesses` so "why is half the table blank" is answered in the UI.
-- **T7 — payload size is measured before it is trimmed.** The harness gains a per-tick
-  serialized byte count in 7.1. If a few hundred KB per second shows up as a cost, the
-  fix is a slimmer event, decided on the number — not preemptively.
+- **T7 — payload size was measured before anything was trimmed.** The harness now prints
+  it: 106 KB mean per tick. The decision on that number is still to send the whole tick,
+  because the alternative — a top-N event plus a pull for the rest — splits one tick into
+  two sources of truth for ~100 KB. If the webview shows a real cost in 7.3, the first
+  thing to cut is the per-row `exePath` and `publisher` strings for rows the table is not
+  displaying, and that cut gets made on a measurement, not on this figure.
 - **T8 — Task 7 ships no pause-when-hidden and no EcoQoS.** Task 11 owns the budget and
   the window events; this task only starts and stops the loop with the app.
 - **T9 — the UI gets a real test stack.** The chosen answer to the verification gap is
