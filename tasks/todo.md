@@ -33,7 +33,7 @@ Spec: `docs/SPEC.md`
     Windows reason behind a rejection, parent, session, window title, start
     time, and memory; critical processes are flagged with a reason and are
     unselectable, including the ones whose path Windows hides.
-  - Verify: `cargo test` (64 tests; 48 of them cover `monitor` and `risk`); compare against
+  - Verify: `cargo test` (78 tests; 62 of them cover `monitor` and `risk`); compare against
     Task Manager with `cargo run --manifest-path src-tauri/Cargo.toml --example processes`.
   - Files: `src-tauri/src/monitor/process.rs`, `src-tauri/src/risk/denylist.rs`, tests.
 
@@ -73,11 +73,20 @@ Spec: `docs/SPEC.md`
     - Files: `src-tauri/src/monitor/pdh.rs`, `src-tauri/src/monitor/mod.rs`,
       `src-tauri/Cargo.toml`, `src-tauri/examples/pdh.rs`.
 
-  - [ ] **6.3** `monitor/gpu.rs`: instance-name parser and per-PID aggregation.
+  - [x] **6.3** `monitor/gpu.rs`: instance-name parser and per-PID aggregation.
     - Acceptance: parses PID, LUID, engine index and engine type, including an empty
       `engtype_` token; aggregation follows the plan's GPU decision.
     - Verify: unit tests over captured real instance names from this machine.
-    - Files: `src-tauri/src/monitor/gpu.rs`.
+    - Done: the parser is anchored token by token, so the engine type is the verbatim
+      tail — `3D`, `GDI Render` (a space), `Security` and the empty string all survive,
+      and LUID case is not assumed. Aggregation sums every sampled engine of a PID
+      across LUIDs (the Task Manager model the user chose), keeps the per-engine
+      breakdown for the tooltip, counts unsampled engines, and reports a process whose
+      engines are all unsampled as `None` rather than zero. Names that do not parse
+      land in `GpuReport::unparsed` instead of disappearing. 14 tests run against
+      names captured from this machine; the `pdh` example parsed all 307 live
+      instances with zero unparsed, ~1 ms to aggregate per tick.
+    - Files: `src-tauri/src/monitor/gpu.rs`, `src-tauri/examples/pdh.rs`.
 
   - [ ] **6.4** `monitor/types.rs` + `monitor/scheduler.rs`: tick loop and system totals.
     - Acceptance: a background tick produces `ProcessMetrics` + `SystemSummary` on the

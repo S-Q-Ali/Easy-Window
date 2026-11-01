@@ -187,6 +187,12 @@ and five one-second ticks; run it with `cargo run --example pdh`.
   writes the instance names into the tail of the same allocation, so a name is read only
   up to that allocation's end. Without the bound, an unterminated name would be followed
   for 32 768 units past it.
+- **The 6.3 parser reads every live name:** all 307 `\GPU Engine` instances on this
+  machine parse, and grouping them by PID takes ~1 ms per tick (3 LUIDs, ~21 processes).
+  The 2026-11-01 capture was 287 names over 20 PIDs with the strict shape
+  `pid_<n>_luid_0x_-prefixed-hex_0x_-prefixed-hex_phys_<n>_eng_<n>_engtype_<verbatim>`;
+  type counts varied between captures (60 empty types then, ~80 now), which is exactly
+  why the type is kept as a string, never an enum.
 
 ### Sources
 
