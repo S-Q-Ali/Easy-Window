@@ -1,0 +1,63 @@
+name: Bug report
+description: Something Easy Window does is wrong
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Easy Window is a Windows 11 tool and a Chrome MV3 extension. Please say
+        which part you are reporting on, and include your Windows and Chrome
+        versions. There are no released builds yet, so a report against `main`
+        is expected — say whether you built from source.
+  - type: dropdown
+    attributes:
+      label: Component
+      options:
+        - Desktop app (Windows Performance Guard)
+        - Chrome extension (Chrome Session Guard)
+        - Native messaging host
+        - Build or CI
+        - Documentation
+    validations:
+      required: true
+  - type: textarea
+    attributes:
+      label: What happened
+      description: Actual behaviour, in as few sentences as you can manage.
+      placeholder: |
+        The process table lists a service running in session 0 as a safe
+        candidate to close.
+    validations:
+      required: true
+  - type: textarea
+    attributes:
+      label: What you expected
+      placeholder: Session 0 processes are never offered as close candidates.
+    validations:
+      required: true
+  - type: textarea
+    attributes:
+      label: Steps to reproduce
+      value: |
+        1.
+        2.
+        3.
+    validations:
+      required: true
+  - type: textarea
+    attributes:
+      label: Environment
+      description: Windows build, Chrome version, commit you built from.
+      value: |
+        - Windows:
+        - Chrome:
+        - Commit:
+    validations:
+      required: true
+  - type: textarea
+    attributes:
+      label: Logs
+      description: |
+        Paste output only after checking it. Do not include cookie values,
+        tokens, password material, or full process command lines — those may
+        contain secrets.

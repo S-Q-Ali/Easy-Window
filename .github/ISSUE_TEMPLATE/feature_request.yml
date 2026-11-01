@@ -1,0 +1,43 @@
+name: Feature request
+description: Propose something new — check the spec and task list first
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Read `docs/SPEC.md` (scope, threat model) and `tasks/todo.md` before
+        proposing. Many ideas are already scheduled; if yours is there, comment
+        on that task instead. Anything on the "out of scope" list needs a
+        written case for why the boundary should move.
+  - type: textarea
+    attributes:
+      label: The problem, not the feature
+      description: What could you not do, and how did you work around it?
+      placeholder: |
+        I keep discovering that a site I logged out of still has a live session
+        in another Chrome profile.
+    validations:
+      required: true
+  - type: textarea
+    attributes:
+      label: Proposed change
+    validations:
+      required: true
+  - type: dropdown
+    attributes:
+      label: Does it need elevation, network access, or a new permission?
+      description: |
+        Easy Window runs without admin and without network by default. A "yes"
+        here is a design decision, not an implementation detail.
+      options:
+        - No
+        - Needs admin
+        - Needs network
+        - Needs a new browser permission
+        - Not sure
+    validations:
+      required: true
+  - type: textarea
+    attributes:
+      label: What could go wrong
+      description: Data loss, logged-out surprises, a process killed that should not have been.
