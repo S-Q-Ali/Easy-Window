@@ -1,6 +1,6 @@
 # Task List: Easy Window MVP
 
-Status: Draft for approval
+Status: Phase 1 in progress — Tasks 1-5 done
 Plan: `tasks/plan.md`
 Spec: `docs/SPEC.md`
 
@@ -28,9 +28,13 @@ Spec: `docs/SPEC.md`
 
 ## Phase 1 — Windows Performance Guard
 
-- [ ] **Task 5: Process snapshot + denylist**
-  - Acceptance: Snapshot includes PID, name, path, publisher, signature, parent, session, window title; critical processes flagged and unselectable.
-  - Verify: Unit tests; manual compare with Task Manager.
+- [x] **Task 5: Process snapshot + denylist**
+  - Acceptance: Snapshot includes PID, name, path, publisher, signature and the
+    Windows reason behind a rejection, parent, session, window title, start
+    time, and memory; critical processes are flagged with a reason and are
+    unselectable, including the ones whose path Windows hides.
+  - Verify: `cargo test` (44 tests; 28 of them cover `monitor` and `risk`); compare against
+    Task Manager with `cargo run --manifest-path src-tauri/Cargo.toml --example processes`.
   - Files: `src-tauri/src/monitor/process.rs`, `src-tauri/src/risk/denylist.rs`, tests.
 
 - [ ] **Task 6: PDH telemetry**

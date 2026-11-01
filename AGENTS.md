@@ -19,8 +19,10 @@ Stack: **Tauri 2 + Rust + React 19/TypeScript/Vite**; Chrome MV3 extension; SQLi
 ## Current status
 
 Phase 0 is complete: Tauri 2 shell, React UI, design tokens, SQLite store,
-audit log, and `npm run verify`. No feature modules yet. Next is Task 5 in
-`tasks/todo.md` (process snapshot + denylist), which starts Phase 1.
+audit log, and `npm run verify`. Phase 1 has started: Task 5 delivers the
+read-only process snapshot (`src-tauri/src/monitor/process.rs`) and the
+critical-process denylist (`src-tauri/src/risk/denylist.rs`), not wired to the
+UI yet. Next is Task 6 (PDH telemetry); the snapshot feeds it.
 
 ## Commands
 
@@ -57,7 +59,7 @@ src/                  React UI
 src-tauri/            Rust core + Tauri app
   migrations/         SQL, applied via PRAGMA user_version
   src/store/          SQLite settings + audit (tested)
-  src/monitor/        PDH/ETW telemetry (next)
+  src/monitor/        process snapshot (done), PDH/ETW telemetry (next)
   src/actions/        close, priority, startup
   src/ipc/            native messaging + named pipe
   src/risk/           scoring and denylist
@@ -75,6 +77,9 @@ tests/e2e/            Playwright extension tests
 - Chrome cookie DB: `%LOCALAPPDATA%\Google\Chrome\User Data\<profile>\Network\Cookies`. If Chrome is running, copy `Cookies`, `Cookies-wal`, and `Cookies-shm` before reading.
 - Native messaging manifest: `HKCU\Software\Google\Chrome\NativeMessagingHosts\<name>` with an exact extension ID in `allowed_origins`.
 - Chrome Web Store broad cookie permissions are a release risk; unpacked extension is the MVP path.
+- Without elevation, `ProcessIdToSessionId` and `QueryFullProcessImageNameW` both fail for Windows-protected processes (~75 of 280 here), so session and path are missing for exactly the processes that must never be closed. `CriticalReason::IdentityUnavailable` blocks them — a missing path is never harmless.
+- Signature checks dominate a snapshot: ~8 s cold, ~0.5 s warm with one shared `SignatureCache`. Extra worker threads do not help; Windows serialises `WinVerifyTrust` and catalog calls.
+- Expired-but-genuine signatures exist here (Git's `bash.exe` verifies `CERT_E_EXPIRED`). Carry the reason, do not report a bare `invalid`.
 - The app must stay lightweight: pause sampling when hidden, use EcoQoS for itself, keep idle CPU <1% and RAM <80 MB.
 - Extension build uses **WXT** (MIT). CRXJS has no SPDX license — do not add it.
 - `nickshui/Win-Top` has **no LICENSE file**: ideas only, never copy code or assets.
