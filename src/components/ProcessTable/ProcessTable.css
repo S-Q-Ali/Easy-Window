@@ -111,16 +111,17 @@
 }
 
 .process-table th:nth-child(1) {
-  width: 30%;
+  width: 22%;
 }
 
 .process-table th:nth-child(2) {
-  width: 8%;
+  width: 6%;
   text-align: right;
 }
 
+/* A metric column now carries a 48 px line as well as the number. */
 .process-table th:nth-child(n + 3) {
-  width: 12%;
+  width: 14.4%;
   text-align: right;
 }
 
@@ -175,12 +176,32 @@ th[aria-sort="none"] .process-table__sort:hover {
 }
 
 .process-table__num {
-  text-align: right;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--space-2);
   font-family: var(--font-mono);
   font-size: var(--text-xs);
 }
 
+/* The number is the reading and the line is its trend, so exactly one line per
+   row is drawn — on the column the table is sorted by — and it is the only
+   accent-coloured ink in the table. */
+.process-table__spark {
+  flex: none;
+}
+
+.process-table__spark path {
+  fill: none;
+  stroke: var(--accent);
+  stroke-width: 1;
+}
+
 @media (max-width: 860px) {
+  .process-table__spark {
+    display: none;
+  }
+
   .process-table__search input {
     width: 160px;
   }

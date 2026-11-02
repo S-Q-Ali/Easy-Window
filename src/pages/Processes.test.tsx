@@ -109,6 +109,28 @@ describe("Processes page", () => {
     expect(screen.queryByText("notepad.exe")).toBeNull();
   });
 
+  it("gives the table a line that grows from the ticks it has been shown", async () => {
+    invokeOnce({
+      state: "running",
+      tick: tick([row({ pid: 1, name: "notepad.exe", cpuPercent: 4 })]),
+    });
+    const { container } = render(<Processes />);
+    await screen.findByText("notepad.exe");
+
+    // One sample is not a trend, so the pull alone draws no line.
+    expect(container.querySelector("svg")).toBeNull();
+
+    await act(() =>
+      listener?.({
+        payload: tick([row({ pid: 1, name: "notepad.exe", cpuPercent: 9 })], { sequence: 2 }),
+      }),
+    );
+
+    const svg = container.querySelector("svg");
+    expect(svg?.getAttribute("aria-hidden")).toBe("true");
+    expect(svg?.querySelector("path")).not.toBeNull();
+  });
+
   it("stops listening when the page leaves the screen", async () => {
     invokeOnce({
       state: "running",

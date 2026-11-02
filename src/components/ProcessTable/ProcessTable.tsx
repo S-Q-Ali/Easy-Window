@@ -1,6 +1,8 @@
 import { useMemo, useState } from "react";
+import { MetricHistory, type Series } from "../../lib/history";
 import { rowKey, type ProcessMetrics, type Tick } from "../../lib/metrics";
 import { formatBytes, formatBytesPerSec, formatPercent } from "./format";
+import { Sparkline } from "./Sparkline";
 import { compareRows, DEFAULT_SORT, type Sort, type SortColumn } from "./sort";
 import "./ProcessTable.css";
 
@@ -42,7 +44,27 @@ function staleGpuTick(tick: Tick): number | null {
   return tick.gpuSequence < tick.sequence ? tick.gpuSequence : null;
 }
 
-export function ProcessTable({ tick }: { tick: Tick }) {
+type MetricCellProps = {
+  value: number | null;
+  series: Series;
+  format: (value: number | null) => string;
+  ceiling?: number;
+  active: boolean;
+};
+
+function MetricCell({ value, series, format, ceiling, active }: MetricCellProps) {
+  return (
+    <td className="process-table__num">
+      {/* One line per row, on the column being read. Drawing all five measured
+          46 ms of geometry and 702 KB of path data per tick for shapes the
+          reader is not looking at; one costs a fifth of that. */}
+      {active ? <Sparkline values={series} ceiling={ceiling} /> : null}
+      <span>{format(value)}</span>
+    </td>
+  );
+}
+
+export function ProcessTable({ tick, history }: { tick: Tick; history: MetricHistory }) {
   const [sort, setSort] = useState<Sort>(DEFAULT_SORT);
   const [query, setQuery] = useState("");
 
@@ -155,27 +177,50 @@ export function ProcessTable({ tick }: { tick: Tick }) {
               </tr>
             </thead>
             <tbody>
-              {sorted.map((metrics) => (
-                <tr key={rowKey(metrics.process)}>
-                  <td className="process-table__name">{metrics.process.name}</td>
-                  <td className="process-table__num">{metrics.process.pid}</td>
-                  <td className="process-table__num">
-                    {formatPercent(metrics.process.cpuPercent)}
-                  </td>
-                  <td className="process-table__num">
-                    {formatBytes(metrics.process.memoryBytes)}
-                  </td>
-                  <td className="process-table__num">
-                    {formatBytesPerSec(metrics.process.diskReadBytesPerSec)}
-                  </td>
-                  <td className="process-table__num">
-                    {formatBytesPerSec(metrics.process.diskWriteBytesPerSec)}
-                  </td>
-                  <td className="process-table__num">
-                    {formatPercent(metrics.gpuPercent)}
-                  </td>
-                </tr>
-              ))}
+              {sorted.map((metrics) => {
+                const windows = history.seriesFor(metrics.process);
+                const { process } = metrics;
+                return (
+                  <tr key={rowKey(process)}>
+                    <td className="process-table__name">{process.name}</td>
+                    <td className="process-table__num">{process.pid}</td>
+                    {/* CPU has a fixed axis, so two rows are comparable at a glance. */}
+                    <MetricCell
+                      value={process.cpuPercent}
+                      series={windows.cpu}
+                      format={formatPercent}
+                      ceiling={100}
+                      active={sort.column === "cpu"}
+                    />
+                    <MetricCell
+                      value={process.memoryBytes}
+                      series={windows.memory}
+                      format={formatBytes}
+                      active={sort.column === "memory"}
+                    />
+                    <MetricCell
+                      value={process.diskReadBytesPerSec}
+                      series={windows.diskRead}
+                      format={formatBytesPerSec}
+                      active={sort.column === "diskRead"}
+                    />
+                    <MetricCell
+                      value={process.diskWriteBytesPerSec}
+                      series={windows.diskWrite}
+                      format={formatBytesPerSec}
+                      active={sort.column === "diskWrite"}
+                    />
+                    {/* No ceiling: a per-PID GPU total sums every engine and can
+                        legitimately pass 100, which a fixed axis would clip away. */}
+                    <MetricCell
+                      value={metrics.gpuPercent}
+                      series={windows.gpu}
+                      format={formatPercent}
+                      active={sort.column === "gpu"}
+                    />
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
         </div>

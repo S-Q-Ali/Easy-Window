@@ -19,8 +19,9 @@ export function formatPercent(value: number | null): string {
   return value === null ? UNMEASURED : `${value.toFixed(1)}%`;
 }
 
-export function formatBytes(value: number): string {
-  return formatSize(value, false);
+/** Memory is the one metric the snapshot always answers; `null` is a gap, not a zero. */
+export function formatBytes(value: number | null): string {
+  return value === null ? UNMEASURED : formatSize(value, false);
 }
 
 export function formatBytesPerSec(value: number | null): string {

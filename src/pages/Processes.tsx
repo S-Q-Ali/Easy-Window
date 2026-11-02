@@ -1,28 +1,33 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { EmptyState } from "../components/EmptyState";
 import { PageHeader } from "../components/PageHeader";
 import { ProcessTable } from "../components/ProcessTable/ProcessTable";
 import { ActivityIcon } from "../components/icons";
+import { MetricHistory } from "../lib/history";
 import type { SamplingState, Tick } from "../lib/metrics";
 import "./pages.css";
 
 export function Processes() {
   const [tick, setTick] = useState<Tick | null>(null);
   const [failure, setFailure] = useState<string | null>(null);
+  const [history] = useState(() => new MetricHistory());
+  const shown = useRef<number | null>(null);
 
   useEffect(() => {
     let cancelled = false;
     let unlisten: UnlistenFn | null = null;
 
-    // Ticks are numbered, so an event that arrives before the pull is answered
-    // cannot be overwritten by the older snapshot the pull returns.
+    // The pull and the push both land here, and ticks are numbered, so the
+    // older of the two never wins — and the sparkline history, which is built
+    // by sample count rather than by time, never rewinds or double-counts.
     const apply = (next: Tick) => {
       if (cancelled) return;
-      setTick((current) =>
-        current === null || next.sequence > current.sequence ? next : current,
-      );
+      if (shown.current !== null && next.sequence <= shown.current) return;
+      shown.current = next.sequence;
+      history.record(next);
+      setTick(next);
     };
 
     invoke<SamplingState>("latest_tick")
@@ -51,7 +56,7 @@ export function Processes() {
       cancelled = true;
       unlisten?.();
     };
-  }, []);
+  }, [history]);
 
   return (
     <div className="page">
@@ -78,7 +83,7 @@ export function Processes() {
           </EmptyState>
         </div>
       ) : (
-        <ProcessTable tick={tick} />
+        <ProcessTable tick={tick} history={history} />
       )}
     </div>
   );
