@@ -25,11 +25,15 @@ critical-process denylist (`src-tauri/src/risk/denylist.rs`); Task 6 is
 complete — the PDH wrapper, the GPU engine parser and sampler, the tick shapes
 in `monitor/types.rs`, and `monitor/scheduler.rs`, which ticks both clocks and
 publishes each snapshot, plus `cargo run --release --example metrics`, the
-overhead harness that measures what that loop costs. Task 7 is under way: the
-loop now runs inside the app (`commands/processes.rs`), `latest_tick()` answers
-the first frame and every tick is emitted on `metrics://tick` — but nothing on
-screen reads them yet, so the Processes page is still its empty state. Next is
-7.3, the process table.
+overhead harness that measures what that loop costs. Task 7 is nearly done: the
+loop runs inside the app (`commands/processes.rs`), `latest_tick()` answers the
+first frame and every tick is emitted on `metrics://tick`, and the Processes
+page now paints that tick — `src/components/ProcessTable/` sorts on any metric,
+filters by name or PID, prints an unmeasured figure as an em dash, and marks the
+GPU column with the tick that actually read it, all under a Vitest + Testing
+Library + axe stack that `npm run verify` now runs. Remaining in Task 7: 7.4
+sparklines, and the manual pass in the live window that 7.3's jsdom tests cannot
+replace.
 
 ## Commands
 
@@ -38,7 +42,8 @@ npm install
 npm run tauri dev          # dev app with HMR
 npm run tauri build        # installer
 npm run typecheck
-npm run verify             # typecheck + build + fmt + clippy + cargo test
+npm test                   # vitest: table sorting, formatting, filters, axe on the rendered table
+npm run verify             # typecheck + vitest + build + fmt + clippy + cargo test
 cargo test --manifest-path src-tauri/Cargo.toml
 cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings
 cargo fmt --manifest-path src-tauri/Cargo.toml --check
@@ -61,7 +66,8 @@ cargo run --release --manifest-path src-tauri/Cargo.toml --example metrics   # 6
 
 ```text
 src/                  React UI
-  components/         shell, page header, empty state, icons
+  components/         shell, page header, empty state, icons, ProcessTable/
+  lib/                metrics.ts — the tick shapes mirrored from Rust
   pages/              Overview, Sessions, Processes, Startup, Settings, Audit
   styles/             tokens.css + global.css
 src-tauri/            Rust core + Tauri app

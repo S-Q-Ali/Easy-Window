@@ -204,14 +204,56 @@ Spec: `docs/SPEC.md`
       repo already records that a tick can overrun its interval four times.
     - Files: `src-tauri/src/commands/processes.rs`, `src-tauri/src/commands/mod.rs`,
       `src-tauri/src/monitor/scheduler.rs`, `src-tauri/src/lib.rs`.
-  - [ ] **7.3** `ProcessTable`: sortable headers on CPU/RAM/disk/GPU/name, name+PID filter,
+  - [x] **7.3** `ProcessTable`: sortable headers on CPU/RAM/disk/GPU/name, name+PID filter,
     em dash for `None` sorting last, the stale-GPU marker from `gpuSequence`, and
     empty/loading/error states. Real buttons with `aria-sort`.
+    - Done: `src/lib/metrics.ts` mirrors the wire shapes T7.1 froze — declarations only,
+      with a note that the Rust tests are the authority on the key names. The table reads a
+      tick and nothing else: sort and filter are `useMemo`s over `tick.processes`, so
+      re-sorting costs no IPC, and each row is keyed by `pid:startTime` (T4) — the test that
+      feeds two rows with PID 4712 and different start times gets two rows, not a React
+      key collision. Every metric is `formatPercent`/`formatBytes`/`formatBytesPerSec`,
+      which answer an em dash for `null` and never a `0` (T6), and `compareRows` parks a
+      `null` at the end whichever way the column runs — a numeric `0` still sorts as a
+      real measurement, because only the missing path, not a quiet process, produces `null`.
+      The default sort is CPU descending, so the heaviest user is on top without a click.
+      A `null` `cpuPercent` is counted by `summary.unmeasuredProcesses` and said in plain
+      words above the table, because on this machine about half the rows are unmeasured and
+      a wall of em dashes otherwise looks like a broken read. The GPU column carries its
+      staleness in the header: a visual `#12` with the sentence in a `visually-hidden`
+      span, shown only when `gpuSequence < sequence`, and the `warming`/`unavailable`
+      states get their own line — `unavailable` passes the Rust reason straight through.
+      Loading, error and no-match states live in the page and the table respectively; the
+      page keeps a numbered-tick rule (`apply` ignores a tick older than the one on screen)
+      so the pull cannot overwrite an event that arrived first.
+    - Not measured: no virtualisation, on the plan's arithmetic — 274–311 rows is a
+      `useMemo`'d sort and a re-render, not an IPC round trip, and the harness already
+      records the tick arriving 42 ms to 4.1 s apart, so the table never has to keep up
+      with 1 Hz by itself. Whether 300 rows actually paint inside a tick is a question for
+      the live window, which has not been opened.
+    - Files: `src/lib/metrics.ts`, `src/components/ProcessTable/*`, `src/pages/Processes.tsx`.
+    - Outstanding: the manual pass in `npm run tauri dev` — the live window, not jsdom — has
+      not been done, and the scroll region's `max-height: calc(100vh - 260px)` is an
+      untuned constant that pass should replace with whatever the shell actually leaves.
   - [ ] **7.4** Sparklines: webview ring buffer keyed by `pid`+`startTime`, last 60 samples
     per metric, inline SVG marked hidden from assistive tech with the number in text.
-  - [ ] **7.5** UI test stack: Vitest + Testing Library + axe as dev dependencies, an
+  - [x] **7.5** UI test stack: Vitest + Testing Library + axe as dev dependencies, an
     `npm test` script wired into `npm run verify`, and table tests for sorting, the `None`
     em dash, keyboard access and recycled-PID row identity.
+    - Done: vitest 5.0.5 + jsdom 30.1.3 + Testing Library React 16.3.3 + axe-core 4.14.0,
+      `vitest.config.ts` with `globals: true` (Testing Library registers its teardown
+      through the global `afterEach`) and `include: src/**/*.test.{ts,tsx}`, so Rust-only
+      code is not picked up. `npm test` runs `vitest run` and `npm run verify` now calls it
+      between `typecheck` and `build` — the gap the plan recorded as an open question is
+      closed, and the verify line is the one thing CI and a human both run. 37 tests across
+      4 files: formatting, the comparator, the table, and the page's subscription to the
+      loop. The table suite covers all four behaviours the task named plus `aria-sort` on
+      every column, case-insensitive name and PID filters, the clear-filter path, both GPU
+      note states, the stale marker on and off, and one `axe.run` over the rendered table
+      with a stale GPU header — it asserts an empty violation list, so a regression fails
+      with the rule and the offending HTML rather than a score.
+    - Files: `package.json`, `package-lock.json`, `vitest.config.ts`, `tsconfig.json`,
+      `tsconfig.node.json`.
   - Files: `src/pages/Processes/*`, `src/components/ProcessTable/*`,
     `src-tauri/src/commands/processes.rs`, `src-tauri/src/monitor/types.rs`.
 
