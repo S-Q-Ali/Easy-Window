@@ -410,6 +410,109 @@ no charting dependency.
   channel's `Sender`, which is `Send` but not `Sync`, so `Metrics` keeps the loop behind a
   `Mutex` and drops it to stop the loop at exit.
 
+## Task 8 design: the process risk score
+
+Task 7 shows what every process is *doing*. Task 8 answers the question the user
+actually asks — "can I close this?" — and Task 9 acts on that answer, so the
+score has to be Rust-side, explained in words, and impossible to talk out of a
+denylist block.
+
+### Measured and documented facts it must design around
+
+- About half the rows (131 of 274 in the Task 6 capture) have no CPU or disk figure.
+  Those rows are unmeasured because their executable path could not be read without
+  elevation, which is the same condition that sets `CriticalReason::IdentityUnavailable`
+  — so D2 catches them, but a "0 % CPU, 0 B/s" reading must never be derived from a
+  `None` anyway.
+- The spec's idleness test is "idle > 10 min", and **no idle time exists in the data.**
+  `ProcessSnapshot` has `start_time`, `window_title`, `cpu_percent`, `memory_bytes` and
+  disk rates; there is no per-process idle measurement, and `GetLastInputInfo` is
+  system-wide, not per process. Idleness therefore has to be derived and labelled with
+  the window it was observed in.
+- The score travels on the tick the table already receives (~106 KB for ~274 rows). Any
+  per-row cost is a per-tick cost on a loop that already averages 372 ms of its interval
+  and busts its own 1 % CPU budget on 230 of 599 ticks, so 8.4 re-runs the harness.
+- Row render cost is measured at ~0.26 ms per row in the production bundle (Task 7
+  follow-up), so an eighth column is affordable; the badge itself is not the cost.
+- `settings.set` caps a value at 4096 chars and a key at 100, so a path allow-list does
+  not fit the key/value table (see D6).
+- `tokens.css` has `--danger`, `--warning`, `--accent` and their `-soft` variants, light
+  and dark. There is no success/safe token (D7).
+
+### Sources
+
+Existing code only: `risk::denylist::assess` (`Option<CriticalReason>`, pure, ordered by
+specificity), `monitor::process::ProcessSnapshot` (16 fields, ten `Option`), `store`
+(migrations via `PRAGMA user_version`), `commands/mod.rs` (`get_setting`/`set_setting`).
+Win32: nothing new — no additional API is needed to derive idleness from what the
+snapshot already carries.
+
+### Decisions (awaiting approval)
+
+- **D1 — the score is computed in Rust and shipped on the tick.** A JS-side score would
+  make Task 9's action gate depend on whatever the webview last rendered. `ProcessMetrics`
+  gains a `risk: ProcessRisk` next to `gpu_percent`; `ProcessSnapshot` stays exactly the
+  measurement it is.
+- **D2 — a denylisted process is never scored, only protected.** `critical_reason.is_some()`
+  short-circuits before any arithmetic: level `Protected`, reason = that `CriticalReason`'s
+  `label()`, `closeable = false`. The test that matters is the friendly-looking case: a
+  no-window, 0 %-CPU, three-day-old `svchost.exe` reads `Protected`, not `Safe to close` —
+  and the same rule applies to the ignore list (D6), so an allow-listed critical process
+  still reads `Protected`.
+- **D3 — the number answers "what is this costing me while I am not using it".** Three
+  factors in 0..=1, multiplied, in the spec's shape: `impact` (working set + CPU + disk
+  bytes/sec, each bucketed against a named constant), `idleness` (D4), `unsafety`
+  (signature status, publisher, window presence, session). A literal product is what makes
+  the reading sane: a loud process you are looking at, or a Microsoft-signed one, scores
+  near zero without anyone having to special-case it. `score` is reported to one decimal
+  and `reasons` is a `Vec<RiskReason>` (fieldless enum, `&'static str` labels) so the UI
+  says *why* in the user's words, which is the acceptance criterion.
+- **D4 — idleness is an observed quiet streak, and it says so.** The process clock keeps,
+  per `pid` + creation time, the `Instant` at which the process was first seen with no
+  window title and CPU below a constant; the streak resets when either stops holding.
+  Two honest consequences: the app can only certify idleness for as long as it has been
+  running (a process quiet for 4 minutes since launch reads 4 minutes, even if it was
+  idle for 6 hours before that), and the state is ~300 entries of key + `Instant` — a few
+  KB, well inside the RAM budget, and it lives in the sampler rather than in the webview
+  because the action gate cannot depend on what the UI happens to have buffered.
+- **D5 — levels are thresholds on the score, with `Protected` above them.**
+  `Protected` (D2) → `Review` (score ≥ 0.66) → `Consider closing` (≥ 0.33) → `Low impact`.
+  Every threshold is a named constant in `process_score.rs` with a test on each boundary,
+  and the doc comment on the module carries the whole model so a reader can argue with it.
+- **D6 — "ignore this process" is a table of executable paths, not a settings row.**
+  New migration `process_ignore(path_hash PRIMARY KEY, path, publisher, added_at)`;
+  `path_hash` is a hash of the normalised (verbatim-cased, `\\?\`-stripped) path because a
+  path is the identity that survives a reboot while a PID does not and a name is spoofable
+  — the identity invariant in `AGENTS.md`. Commands `ignore_process` / `list_ignored` /
+  `unignore_process`, each writing an audit event. Ignoring removes the row from the
+  suggestions and gives it an `Ignored` badge; it never lifts a `Protected` reading.
+- **D7 — `RiskBadge` uses the tokens that exist.** `--danger` for `Protected`,
+  `--warning` for `Review`, `--accent` for `Consider closing`, and `Low impact` in the
+  muted secondary text treatment — no green token is invented for it. The badge is a
+  `<span>` with the level as text (never colour alone) and the reasons behind
+  `aria-describedby`, so the sentence is available to a screen reader and to a keyboard
+  user without a hover.
+- **D8 — "manual review of top 20" becomes a command, not a vibe.** `cargo run --example
+  risk` prints the twenty highest-scoring rows on this machine with their reasons, the
+  same way `--example metrics` made the overhead claim checkable. The read-out goes into
+  the task record; anything in that list that should not be there is a scoring bug found
+  before Task 9 can act on it.
+
+### Sub-tasks
+
+1. **8.1 Quiet streak.** Sampler-side per-identity `Instant`, reset rule, one constant for
+   the CPU threshold; Rust tests for start, reset on a window appearing, reset on CPU
+   rising, and a recycled PID starting over.
+2. **8.2 `risk/process_score.rs`.** Factors, levels, reasons; unit tests including D2's
+   `svchost` case, every threshold boundary, and a `None` CPU never becoming 0 impact.
+3. **8.3 Ignore list.** Migration, `store::ignore`, three commands, audit events, tests.
+4. **8.4 Score on the tick.** Derive per row, serialize in the same camelCase convention,
+   re-run `--example metrics` and record the new tick cost, mirror the shape in
+   `src/lib/metrics.ts` and in `fixtures.ts`.
+5. **8.5 Badge in the table.** `RiskBadge/`, a sortable `risk` column, the ignore
+   affordance, Vitest + axe coverage for the new cell and the keyboard path to the reasons.
+6. **8.6 Top-20 review.** `cargo run --example risk`, read the list, record what it said.
+
 ## Risks and mitigations
 
 | Risk | Impact | Mitigation |

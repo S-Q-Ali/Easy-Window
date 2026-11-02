@@ -1,7 +1,7 @@
 # Task List: Easy Window MVP
 
 Status: Phase 1 in progress — Tasks 1-6 done, Task 7 code-complete pending its
-live-window pass
+live-window pass, Task 8 designed and awaiting approval
 Plan: `tasks/plan.md`
 Spec: `docs/SPEC.md`
 
@@ -296,9 +296,24 @@ Spec: `docs/SPEC.md`
     `src-tauri/src/commands/processes.rs`, `src-tauri/src/monitor/types.rs`.
 
 - [ ] **Task 8: Process risk score**
+  - Design and decisions: `tasks/plan.md` → "Task 8 design" (D1–D8, awaiting approval).
   - Acceptance: Score explains reasons; no critical process can be marked safe; user can ignore a process.
-  - Verify: Unit tests for scoring; manual review of top 20.
+  - Verify: Unit tests for scoring; `cargo run --example risk` top-20 read-out.
   - Files: `src-tauri/src/risk/process_score.rs`, `src/components/RiskBadge/*`, tests.
+  - The spec's "idle > 10 min" has no data behind it yet: `ProcessSnapshot` carries
+    `start_time`, `window_title` and rates, and no per-process idle time — `GetLastInputInfo`
+    is system-wide. D4 derives a quiet streak in the sampler and says how long it has been
+    observed, because the app cannot certify an idle period from before it was running.
+  - [ ] **8.1** Quiet streak in the process clock: per-identity `Instant`, reset rule, Rust tests.
+  - [ ] **8.2** `risk/process_score.rs`: factors, levels, reasons; D2's never-safe case and
+    every threshold boundary under test; a `None` figure never becomes zero impact.
+  - [ ] **8.3** Ignore list as its own table (`process_ignore`, path-keyed) plus the three
+    commands and their audit events — not a `settings` row, which caps at 4096-char values.
+  - [ ] **8.4** Ship `risk` on `ProcessMetrics`, mirror it in `src/lib/metrics.ts` + fixtures,
+    and re-run `--example metrics` to record what scoring adds to the tick.
+  - [ ] **8.5** `RiskBadge` column, sortable; ignore affordance; Vitest + axe on the new cell
+    and the keyboard path to the reasons.
+  - [ ] **8.6** `cargo run --example risk` and a recorded read of the top 20.
 
 - [ ] **Task 9: Graceful close + audit**
   - Acceptance: WM_CLOSE first; wait; report result; force close only after confirmation; critical blocked; audit event.

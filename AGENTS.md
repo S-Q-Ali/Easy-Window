@@ -38,7 +38,12 @@ now runs (58 UI tests). A real Chromium has timed a tick through the table —
 table keeps up without virtualisation. What is left in Task 7 is not code: the
 manual pass in `npm run tauri dev`, which alone can see the paint (a hidden
 measurement page produces no frame) and tune the table's `max-height` constant
-to the shell's real geometry.
+to the shell's real geometry. Task 8 (process risk score) is designed, not built:
+`tasks/plan.md` → "Task 8 design", decisions D1–D8 awaiting approval — the score
+lands in Rust on the tick (never JS, because Task 9 acts on it), a denylisted or
+unverifiable process short-circuits to `Protected` before any arithmetic, and the
+spec's "idle > 10 min" gets a sampler-side quiet streak because no idle time
+exists in the snapshot today.
 
 ## Commands
 
