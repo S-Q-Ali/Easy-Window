@@ -228,15 +228,23 @@ Spec: `docs/SPEC.md`
       Loading, error and no-match states live in the page and the table respectively; the
       page keeps a numbered-tick rule (`apply` ignores a tick older than the one on screen)
       so the pull cannot overwrite an event that arrived first.
-    - Not measured: no virtualisation, on the plan's arithmetic — 274–311 rows is a
-      `useMemo`'d sort and a re-render, not an IPC round trip, and the harness already
-      records the tick arriving 42 ms to 4.1 s apart, so the table never has to keep up
-      with 1 Hz by itself. Whether 300 rows actually paint inside a tick is a question for
-      the live window, which has not been opened.
-    - Files: `src/lib/metrics.ts`, `src/components/ProcessTable/*`, `src/pages/Processes.tsx`.
+    - Measured in a real Chromium (the engine WebView2 uses), not jsdom: the shipped
+      production bundle, 300 rows, default CPU sort, every row's buffer filled to 60 samples,
+      150 sparkline paths on screen (only the measured rows draw a line, as the tick dictates).
+      One tick costs 78.9 ms median of React render and DOM write plus 44.9 ms of layout —
+      about 124 ms, worst tick 168 ms, first full render 127 ms. That is ~10 % of a 1.25 s
+      interval, so no virtualisation was added: the plan's arithmetic held, on a measurement.
+      It scales roughly linearly in rows (30 rows cost 9.5 ms, ~0.26 ms per row), which is the
+      figure to use if the table ever grows past a few hundred. Two caveats that matter: the
+      dev bundle the live pass runs is 5× heavier (614 ms median per tick), so a sluggish
+      table in `npm run tauri dev` is not a shipped-app defect; and this page had no visible
+      surface (a 0×0 hidden viewport), so the layout number is a floor and paint is still
+      unmeasured — nothing produced a frame to time.
     - Outstanding: the manual pass in `npm run tauri dev` — the live window, not jsdom — has
       not been done, and the scroll region's `max-height: calc(100vh - 260px)` is an
-      untuned constant that pass should replace with whatever the shell actually leaves.
+      untuned constant; its correct value needs the shell's real geometry at a real width,
+      which is exactly what a 0×0 viewport cannot give.
+    - Files: `src/lib/metrics.ts`, `src/components/ProcessTable/*`, `src/pages/Processes.tsx`.
   - [x] **7.4** Sparklines: webview ring buffer keyed by `pid`+`startTime`, last 60 samples
     per metric, inline SVG marked hidden from assistive tech with the number in text.
     - Done: `src/lib/history.ts` is the buffer — `MetricHistory.record(tick)` appends one
@@ -258,8 +266,13 @@ Spec: `docs/SPEC.md`
       of geometry, 702 KB of path data and 7500 `<path>` elements per tick; one per row is
       8.87 ms, 141 KB and 1500. That ratio, not taste, is why a row shows exactly one line, on
       the column the table is sorted by. Below 860 px they are hidden with the columns.
-    - Not measured: paint, not geometry. The two figures above are path strings computed in
-      node; layout and rasterising them in WebView2 is the live window's job.
+    - Measured, and lines turned out not to be the cost: in the same Chromium run, hiding all
+      150 with `display: none` moved a tick's dev-bundle cost from 614 ms to 557 ms — the
+      React work is unchanged by that (the paths are still built), so the difference is style
+      and layout for the extra elements, and the 300 rows around them are what the tick pays
+      for. The geometry figures above are still what set the one-line-per-row rule.
+    - Not measured: raster. Nothing produced a frame to time, so the cost of actually painting
+      the lines is still the live window's job.
     - Files: `src/lib/history.ts`, `src/components/ProcessTable/{sparkline-path.ts,Sparkline.tsx,ProcessTable.tsx,ProcessTable.css,format.ts}`,
       `src/pages/Processes.tsx`.
   - [x] **7.5** UI test stack: Vitest + Testing Library + axe as dev dependencies, an

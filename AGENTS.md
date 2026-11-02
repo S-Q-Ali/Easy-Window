@@ -33,10 +33,12 @@ filters by name or PID, prints an unmeasured figure as an em dash, marks the
 GPU column with the tick that actually read it, and draws one trend line per row
 on the column being read, fed by the 60-sample buffer in `src/lib/history.ts`.
 All of it runs under a Vitest + Testing Library + axe stack that `npm run verify`
-now runs (58 UI tests). What is left in Task 7 is not code: the manual pass in
-`npm run tauri dev`, which alone can tell us whether 300 rows paint inside a
-tick and what the lines cost to rasterise, and the `max-height` constant that
-pass should tune.
+now runs (58 UI tests). A real Chromium has timed a tick through the table —
+~124 ms of render and layout for 300 rows in the production bundle — so the
+table keeps up without virtualisation. What is left in Task 7 is not code: the
+manual pass in `npm run tauri dev`, which alone can see the paint (a hidden
+measurement page produces no frame) and tune the table's `max-height` constant
+to the shell's real geometry.
 
 ## Commands
 
@@ -100,6 +102,7 @@ tests/e2e/            Playwright extension tests
 - Signature checks dominate a snapshot: ~8 s cold, ~0.5 s warm with one shared `SignatureCache`. Extra worker threads do not help; Windows serialises `WinVerifyTrust` and catalog calls.
 - Expired-but-genuine signatures exist here (Git's `bash.exe` verifies `CERT_E_EXPIRED`). Carry the reason, do not report a bare `invalid`.
 - The app must stay lightweight: pause sampling when hidden, use EcoQoS for itself, keep idle CPU <1% and RAM <80 MB. Measured over 600 s in release (`--example metrics`): mean 0.96% CPU and 19 MB peak RAM, but 230 of 599 ticks land at or over 1% and the worst reads 5.8% — the budget holds on average and not per tick, which is exactly what the pause/EcoQoS work has to fix. Mean tick wall time is 372 ms of a 1 s interval, and one tick overran it by four times, so nothing downstream may assume a steady 1 Hz. Note what that figure covers: the harness calls `scheduler.tick()` and never emits, so it excludes serializing and pushing the ~106 KB tick, which since 7.2 happens on the same thread. The release cost with emit is not measured; the debug build's webview observed 47 ticks in 60 s — 1.25–1.6 s apart — which is the number a UI consumer should design around.
+- UI cost is measured, and the dev bundle lies: in Chromium with the shipped production build, one tick through a 300-row `ProcessTable` costs ~79 ms of React render plus ~45 ms of layout (~124 ms, worst 168), roughly linear in rows (~0.26 ms/row) — about 10 % of a 1.25 s interval, which is why there is no virtualisation. The same table in `npm run tauri dev` costs ~614 ms per tick, five times heavier, so a sluggish table in dev is not a shipped-app defect. Paint has never been timed: the measurement ran in a hidden 0×0 viewport that produced no frame.
 - Extension build uses **WXT** (MIT). CRXJS has no SPDX license — do not add it.
 - `nickshui/Win-Top` has **no LICENSE file**: ideas only, never copy code or assets.
 - `Moustachauve/cookie-editor` is GPL-3.0 and `sienori/Tab-Session-Manager` is MPL-2.0: do not copy code into this MIT project.
