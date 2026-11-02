@@ -25,15 +25,18 @@ critical-process denylist (`src-tauri/src/risk/denylist.rs`); Task 6 is
 complete — the PDH wrapper, the GPU engine parser and sampler, the tick shapes
 in `monitor/types.rs`, and `monitor/scheduler.rs`, which ticks both clocks and
 publishes each snapshot, plus `cargo run --release --example metrics`, the
-overhead harness that measures what that loop costs. Task 7 is nearly done: the
+overhead harness that measures what that loop costs. Task 7 is code-complete: the
 loop runs inside the app (`commands/processes.rs`), `latest_tick()` answers the
 first frame and every tick is emitted on `metrics://tick`, and the Processes
 page now paints that tick — `src/components/ProcessTable/` sorts on any metric,
-filters by name or PID, prints an unmeasured figure as an em dash, and marks the
-GPU column with the tick that actually read it, all under a Vitest + Testing
-Library + axe stack that `npm run verify` now runs. Remaining in Task 7: 7.4
-sparklines, and the manual pass in the live window that 7.3's jsdom tests cannot
-replace.
+filters by name or PID, prints an unmeasured figure as an em dash, marks the
+GPU column with the tick that actually read it, and draws one trend line per row
+on the column being read, fed by the 60-sample buffer in `src/lib/history.ts`.
+All of it runs under a Vitest + Testing Library + axe stack that `npm run verify`
+now runs (58 UI tests). What is left in Task 7 is not code: the manual pass in
+`npm run tauri dev`, which alone can tell us whether 300 rows paint inside a
+tick and what the lines cost to rasterise, and the `max-height` constant that
+pass should tune.
 
 ## Commands
 
@@ -67,13 +70,14 @@ cargo run --release --manifest-path src-tauri/Cargo.toml --example metrics   # 6
 ```text
 src/                  React UI
   components/         shell, page header, empty state, icons, ProcessTable/
-  lib/                metrics.ts — the tick shapes mirrored from Rust
+  lib/                metrics.ts (tick shapes), history.ts (60-sample per-process buffer)
   pages/              Overview, Sessions, Processes, Startup, Settings, Audit
   styles/             tokens.css + global.css
 src-tauri/            Rust core + Tauri app
   migrations/         SQL, applied via PRAGMA user_version
   src/store/          SQLite settings + audit (tested)
-  src/monitor/        process snapshot (done), PDH/ETW telemetry (next)
+  src/monitor/        snapshot, PDH wrapper, GPU sampler, scheduler — all live
+  src/commands/       latest_tick() and the emit loop Tauri sees
   src/actions/        close, priority, startup
   src/ipc/            native messaging + named pipe
   src/risk/           scoring and denylist

@@ -360,6 +360,16 @@ no charting dependency.
   verify line means what it says. Dev-only dependencies; nothing ships in the bundle.
   Sorting, the em dash for `None`, keyboard reachability and row identity are the cases
   worth proving, because those are the ones a manual pass misses.
+- **T10 — one sparkline per row, on the column the table is sorted by** (decided in 7.4,
+  on a measurement). T5 said the buffer keeps every metric; it never said the row must
+  draw all of them. At 300 rows, five lines each is 43 ms median of geometry and 702 KB of
+  path data per tick — 7500 `<path>` elements — against 8.87 ms and 141 KB for one, and the
+  extra four are shapes the reader is not looking at while a column is unsorted. So the
+  line follows `sort.column`, and the buffer still holds all five so a click moves it
+  instantly. Two more rules fell out of the data: the x-axis is the sample slot, not wall
+  clock, because a tick carries no timestamp and arrives anywhere from 42 ms to 4.1 s after
+  the last, and CPU alone gets a fixed 0–100 axis — GPU is a sum of engines and can pass
+  100, which a clipped axis would hide.
 
 ### Sub-tasks
 

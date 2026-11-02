@@ -23,12 +23,15 @@ building from source.
 What exists today: the desktop shell with its six pages, the local SQLite store
 with a redacted audit log, and a read-only process snapshot that identifies each
 process by PID, start time, executable path and signature, and refuses to treat
-a critical or unverifiable process as something it may close. In the Rust core —
-not yet wired to the app — a sampling loop measures per-process CPU, disk and GPU
-(the engines summed the way Task Manager sums them) once a second and publishes
-each result as one numbered tick. Nothing on screen reads those ticks yet. The
-process table, the Chrome extension, and the packaging work are still ahead;
-`tasks/todo.md` is the honest record of that.
+a critical or unverifiable process as something it may close. The sampling loop
+now runs inside the app: it measures per-process CPU, disk and GPU (the engines
+summed the way Task Manager sums them) and publishes each result as one numbered
+tick. The Processes page reads those ticks — a table you can sort by any metric
+or filter by name and PID, which prints an em dash for a process it cannot
+measure instead of a zero, tags a stale GPU figure with the tick that actually
+read it, and keeps a short trend line for the column you are looking at. What is
+still ahead: acting on a process from that table, the startup audit, the Chrome
+extension, and the packaging work; `tasks/todo.md` is the honest record of that.
 
 ## Try it
 
@@ -37,7 +40,8 @@ Building requires Windows 11, a current Node, and Rust with the MSVC toolchain.
 ```bash
 npm install
 npm run tauri dev     # the desktop app with hot reload
-npm run verify        # typecheck + build + fmt + clippy + cargo test
+npm test              # the UI tests
+npm run verify        # typecheck + UI tests + build + fmt + clippy + cargo test
 cargo run --manifest-path src-tauri/Cargo.toml --example processes   # snapshot dump
 cargo run --release --manifest-path src-tauri/Cargo.toml --example metrics   # what sampling costs
 ```

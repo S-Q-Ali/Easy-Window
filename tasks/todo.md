@@ -1,6 +1,7 @@
 # Task List: Easy Window MVP
 
-Status: Phase 1 in progress — Tasks 1-5 done
+Status: Phase 1 in progress — Tasks 1-6 done, Task 7 code-complete pending its
+live-window pass
 Plan: `tasks/plan.md`
 Spec: `docs/SPEC.md`
 
@@ -137,7 +138,8 @@ Spec: `docs/SPEC.md`
       `AGENTS.md`.
 
 - [ ] **Task 7: Process table UI**
-  - Design and decisions: `tasks/plan.md` → "Task 7 design" (T1–T9 approved 2026-11-02).
+  - Design and decisions: `tasks/plan.md` → "Task 7 design" (T1–T9 approved 2026-11-02;
+    T10 is 7.4's own measurement, recorded where it was made).
   - Acceptance: Sort/filter by CPU/RAM/disk/GPU; sparklines; keyboard accessible; empty/error/loading states.
   - Verify: Manual UI pass in the running app; `npm test` (Vitest + Testing Library + axe on the table); `npm run verify`.
   - Facts this task must design around: 260–302 rows, mean 274; about half of them (131)
@@ -235,8 +237,31 @@ Spec: `docs/SPEC.md`
     - Outstanding: the manual pass in `npm run tauri dev` — the live window, not jsdom — has
       not been done, and the scroll region's `max-height: calc(100vh - 260px)` is an
       untuned constant that pass should replace with whatever the shell actually leaves.
-  - [ ] **7.4** Sparklines: webview ring buffer keyed by `pid`+`startTime`, last 60 samples
+  - [x] **7.4** Sparklines: webview ring buffer keyed by `pid`+`startTime`, last 60 samples
     per metric, inline SVG marked hidden from assistive tech with the number in text.
+    - Done: `src/lib/history.ts` is the buffer — `MetricHistory.record(tick)` appends one
+      sample per metric to a 60-slot window keyed by `rowKey` (`pid:startTime`), and rebuilds
+      its map from the newest tick each time, so a process that has left the table is
+      forgotten and a recycled PID cannot inherit its predecessor's line. All five metrics
+      are kept even though one is drawn, because clicking a header has to be able to move the
+      line without re-reading history. `sparkline-path.ts` is pure geometry: x is the sample
+      slot, not wall clock — a tick carries no timestamp and the harness already records them
+      arriving 42 ms to 4.1 s apart, so time on the axis would be a lie — with the newest slot
+      pinned to the right edge so a young row draws a short line rather than a stretched one.
+      A `null` breaks the line into a separate path run; a run of one point draws nothing.
+      `Sparkline.tsx` renders the inline SVG with `aria-hidden="true" focusable="false"`,
+      leaving the number as the only thing a screen reader can read in the cell. CPU is given
+      a fixed 0–100 axis so two rows are comparable; GPU is deliberately given none, because a
+      per-PID total sums every engine and can legitimately pass 100. Memory can now answer an
+      em dash too — `formatBytes` takes `number | null` like the other formatters.
+    - Measured: what the lines cost, at 300 rows per tick — five per row is a 43.07 ms median
+      of geometry, 702 KB of path data and 7500 `<path>` elements per tick; one per row is
+      8.87 ms, 141 KB and 1500. That ratio, not taste, is why a row shows exactly one line, on
+      the column the table is sorted by. Below 860 px they are hidden with the columns.
+    - Not measured: paint, not geometry. The two figures above are path strings computed in
+      node; layout and rasterising them in WebView2 is the live window's job.
+    - Files: `src/lib/history.ts`, `src/components/ProcessTable/{sparkline-path.ts,Sparkline.tsx,ProcessTable.tsx,ProcessTable.css,format.ts}`,
+      `src/pages/Processes.tsx`.
   - [x] **7.5** UI test stack: Vitest + Testing Library + axe as dev dependencies, an
     `npm test` script wired into `npm run verify`, and table tests for sorting, the `None`
     em dash, keyboard access and recycled-PID row identity.
